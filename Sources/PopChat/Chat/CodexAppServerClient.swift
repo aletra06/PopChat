@@ -468,6 +468,17 @@ enum CodexAppServerClient {
             // id. `ItemAssembly` holds that shape; its doc comment carries the
             // laws (authoritative idempotent completions, willRetry semantics).
             var items = ItemAssembly()
+            // Thinking, assembled the same way and shown in the collapsed
+            // reasoning disclosure. Two streams, never interleaved: the backend
+            // emits `summaryTextDelta` for summarized reasoning and
+            // `textDelta` for raw reasoning, so summaries win and raw text is
+            // the fallback for models that summarize nothing.
+            var reasoningSummary = ItemAssembly()
+            var reasoningRaw = ItemAssembly()
+            func reasoningSnapshot() -> String {
+                let summary = reasoningSummary.snapshot
+                return summary.isEmpty ? reasoningRaw.snapshot : summary
+            }
             var finished = false
             while !finished, let message = try session.nextMessage() {
                 try holder.checkCancellation()
@@ -484,6 +495,28 @@ enum CodexAppServerClient {
                         // key so a nonconforming server still streams.
                         items.delta(id: params["itemId"]?.stringValue ?? "", text: delta)
                         continuation.yield(.partial(items.snapshot))
+                    }
+                // Thinking. Keyed like agentMessage deltas, but by item AND
+                // part index (`summaryIndex`/`contentIndex` are required by the
+                // schema): a model interleaves several summary parts under one
+                // item id, and folding them into one entry would concatenate
+                // separate thoughts into a run-on paragraph. Consecutive
+                // entries join with a blank line, which is exactly the part
+                // break `item/reasoning/summaryPartAdded` announces — so that
+                // notification needs no handler of its own.
+                case "item/reasoning/summaryTextDelta":
+                    if let delta = params["delta"]?.stringValue {
+                        reasoningSummary.delta(
+                            id: reasoningKey(params, index: "summaryIndex"), text: delta
+                        )
+                        continuation.yield(.reasoning(reasoningSnapshot()))
+                    }
+                case "item/reasoning/textDelta":
+                    if let delta = params["delta"]?.stringValue {
+                        reasoningRaw.delta(
+                            id: reasoningKey(params, index: "contentIndex"), text: delta
+                        )
+                        continuation.yield(.reasoning(reasoningSnapshot()))
                     }
                 case "item/started":
                     if let activity = activityLabel(item: params["item"]?.objectValue) {
@@ -523,6 +556,20 @@ enum CodexAppServerClient {
                         // silently.
                         if items.dropInFlight() {
                             continuation.yield(.partial(items.snapshot))
+                        }
+                        // Thinking is re-delivered by the retry too, and no
+                        // reasoning entry is ever marked completed (the
+                        // protocol's authoritative text arrives only for
+                        // agentMessage items), so this drops the aborted
+                        // attempt's reasoning wholesale — the same
+                        // never-glue-a-retry-onto-its-own-prefix rule.
+                        // Both assemblies always, so the array rather than `||`,
+                        // which would short-circuit past the second drop.
+                        let dropped = [
+                            reasoningSummary.dropInFlight(), reasoningRaw.dropInFlight(),
+                        ]
+                        if dropped.contains(true) {
+                            continuation.yield(.reasoning(reasoningSnapshot()))
                         }
                         continuation.yield(.status("Temporary error — Codex is retrying…"))
                     } else if let message = params["error"]?.objectValue?["message"]?.stringValue {
@@ -566,6 +613,15 @@ enum CodexAppServerClient {
                 continuation.yield(.error("Codex app-server failed: \(error.localizedDescription)"))
             }
         }
+    }
+
+    /// Assembly key for a reasoning delta: the item id plus the part index the
+    /// protocol requires on that notification, so separate thoughts under one
+    /// item stay separate entries.
+    private static func reasoningKey(_ params: JSONObject, index: String) -> String {
+        let itemID = params["itemId"]?.stringValue ?? ""
+        let part = params[index]?.intValue ?? 0
+        return "\(itemID)#\(part)"
     }
 
     /// Ordered assembly of one turn's agentMessage items.

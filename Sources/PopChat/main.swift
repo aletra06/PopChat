@@ -23,6 +23,7 @@ if smokePlain || smokeSearch || smokePasteable {
                 : "Reply with exactly: PopChat streaming OK"
         print("smoke: \(config.baseURL) model=\(config.model) search=\(smokeSearch) pasteable=\(smokePasteable)")
         var chunks = 0
+        var reasoningChars = 0
         var history = [OpenAIChatClient.WireMessage(role: "user", content: .text(prompt))]
         if smokePasteable {
             history.insert(
@@ -42,8 +43,10 @@ if smokePlain || smokeSearch || smokePasteable {
                 print("[activity] \(text)")
             case .status(let text):
                 print("[status] \(text)")
+            case .reasoning(let text):
+                reasoningChars = text.count
             case .done(let text):
-                print("chunks=\(chunks)\nfinal=\(text)")
+                print("chunks=\(chunks) reasoningChars=\(reasoningChars)\nfinal=\(text)")
                 if smokePasteable {
                     let blocks = MarkdownRenderer.segments(text).compactMap { segment -> String? in
                         if case .pasteable(let title, let content) = segment {
@@ -306,7 +309,7 @@ if CommandLine.arguments.contains("--smoke-codex-app-server-search") {
                         // labeling bug: the begin event has no query.
                         if value.trimmingCharacters(in: .whitespaces).hasSuffix(":") { emptyQuery = true }
                     }
-                case .status: break
+                case .status, .reasoning: break
                 case .error(let value): failure = value
                 case .contentRejected(_, let value): failure = value
                 }
@@ -361,6 +364,7 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-str
         var sawAborted = false
         var sawGlued = false
         var sawRetryStatus = false
+        var reasoning = ""
         let config = ProviderConfig(
             baseURL: "", apiKey: "", model: "fake-model",
             kind: .codexAppServer
@@ -381,6 +385,8 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-str
                 final = text
             case .status(let text):
                 if text.localizedCaseInsensitiveContains("retrying") { sawRetryStatus = true }
+            case .reasoning(let text):
+                reasoning = text
             case .activity:
                 break
             case .error(let message):
@@ -391,15 +397,22 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-str
         }
         let delay = firstPartialDelay ?? .infinity
         let lead = Date().timeIntervalSince(started) - delay
+        // Reasoning, all three laws in one string: the two summary PARTS of one
+        // item stay separate thoughts (keyed by itemId alone they would run
+        // together as "options.Now"), the raw-reasoning delta loses to the
+        // summary, and the pre-retry thought was dropped like the answer half.
+        let expectedReasoning = "Weighing options.\n\nNow answering."
+        let reasoningOK = reasoning == expectedReasoning
         // final == exactly the three items: the replayed completion of B would
         // make it four, and the aborted "half-answer…" partial must have been
         // streamed (sawAborted) but dropped rather than glued to C (sawGlued).
         let passed = failure == nil && final == "A\n\nB\n\nC" && lead > 1.0
-            && sawAborted && !sawGlued && sawRetryStatus
+            && sawAborted && !sawGlued && sawRetryStatus && reasoningOK
         print(String(
-            format: "first-partial=%.3fs lead=%.3fs aborted=%@ glued=%@ retry-status=%@ final=%@ %@",
+            format: "first-partial=%.3fs lead=%.3fs aborted=%@ glued=%@ retry-status=%@ reasoning=%@ final=%@ %@",
             delay, lead,
             sawAborted ? "yes" : "no", sawGlued ? "yes" : "no", sawRetryStatus ? "yes" : "no",
+            reasoning.replacingOccurrences(of: "\n", with: "\\n"),
             final.replacingOccurrences(of: "\n", with: "\\n"),
             passed ? "PASS" : "FAIL"
         ))
@@ -531,6 +544,8 @@ if CommandLine.arguments.contains("--smoke-chatgpt") {
                 print("[activity] \(text)")
             case .status(let text):
                 print("[status] \(text)")
+            case .reasoning(let text):
+                print("[reasoning] \(text.count) chars")
             case .done(let text):
                 print("chunks=\(chunks)\nfinal=\(text)")
                 exit(text.isEmpty ? 1 : 0)
@@ -589,6 +604,280 @@ if CommandLine.arguments.contains("--smoke-persist") {
     exit(0)
 }
 
+// Re-running the last turn (no network, no UI): Retry and Edit prompt both
+// truncate the transcript, and truncation is where the fork tree can break.
+if CommandLine.arguments.contains("--smoke-rerun") {
+    MainActor.assumeIsolated {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("popchat-rerun-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        ConversationStore.overrideDirectory = scratch
+        var log = CheckLog()
+
+        // No provider is configured in this binary's defaults domain, so send()
+        // takes its explicit-warning path: the user message is appended and an
+        // error row follows. That is enough to prove a retry RE-SENT — and it
+        // keeps the harness off the network.
+        let store = ChatStore(providerStore: ProviderStore(), shortcutStore: ShortcutStore())
+        store.send("first question")
+        let afterFirst = store.messages.map(\.role)
+        log.check("send appends the turn", afterFirst.first == .user && store.messages.count >= 2,
+              "roles=\(afterFirst)")
+        let conversationID = store.conversationID
+
+        // A fork of this conversation must survive its parent being truncated:
+        // it resolves against messages that are about to stop existing.
+        let forkPoint = store.messages[0].id
+        let forkID = UUID()
+        ConversationStore.save(Conversation(
+            id: forkID, title: "child", updatedAt: Date(),
+            messages: [ChatMessage(role: .user, text: "diverged")],
+            parentID: conversationID, forkMessageID: forkPoint
+        ))
+
+        log.check("canRerunLastTurn", store.canRerunLastTurn)
+        store.retryLastTurn()
+        let texts = store.messages.filter { $0.role == .user }.map(\.text)
+        log.check("retry re-sends the same question once", texts == ["first question"], "users=\(texts)")
+        log.check("retry drops the previous outcome",
+              store.messages.filter { $0.role == .user }.count == 1
+                  && store.messages.firstIndex(where: { $0.role == .user }) == 0,
+              "roles=\(store.messages.map(\.role))")
+        let childAfter = ConversationStore.load(id: forkID)
+        log.check("truncation materializes forks", childAfter?.parentID == nil,
+              "parentID=\(String(describing: childAfter?.parentID))")
+        log.check("materialized fork keeps the shared prefix",
+              (childAfter?.messages.count ?? 0) > 1, "messages=\(childAfter?.messages.count ?? -1)")
+
+        // Edit hands the text back and leaves the transcript without that turn.
+        let taken = store.takeLastUserMessageForEditing()
+        log.check("edit returns the question", taken?.text == "first question",
+              "taken=\(String(describing: taken?.text))")
+        log.check("edit empties the transcript", store.messages.isEmpty,
+              "roles=\(store.messages.map(\.role))")
+        log.check("edit removes the stored file too", ConversationStore.load(id: conversationID) == nil)
+        log.check("nothing left to re-run", !store.canRerunLastTurn)
+        log.check("edit on an empty transcript is a no-op", store.takeLastUserMessageForEditing() == nil)
+
+        // ↑ recall's storage: newest first, deduplicated, capped.
+        let savedHistory = PromptHistory.entries
+        UserDefaults.standard.removeObject(forKey: "promptHistory")
+        PromptHistory.record("one")
+        PromptHistory.record("two")
+        PromptHistory.record("one")
+        log.check("recall is newest-first and deduplicated", PromptHistory.entries == ["one", "two"],
+              "entries=\(PromptHistory.entries)")
+        PromptHistory.record("   ")
+        log.check("recall ignores blank prompts", PromptHistory.entries == ["one", "two"])
+        for index in 0..<PromptHistory.maxEntries + 10 { PromptHistory.record("p\(index)") }
+        log.check("recall is capped", PromptHistory.entries.count == PromptHistory.maxEntries,
+              "count=\(PromptHistory.entries.count)")
+        UserDefaults.standard.set(savedHistory, forKey: "promptHistory")
+
+        try? FileManager.default.removeItem(at: scratch)
+        log.finish()
+    }
+}
+
+// Cross-conversation search behind the history popover's field (no UI).
+if CommandLine.arguments.contains("--smoke-chat-search") {
+    let scratch = FileManager.default.temporaryDirectory
+        .appendingPathComponent("popchat-chatsearch-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+    ConversationStore.overrideDirectory = scratch
+    var log = CheckLog()
+
+    // The needle sits in the MIDDLE of the transcript: not in the title (first
+    // message) and not in the snippet (last message). Matching only those two
+    // is exactly the old filter, so this conversation is invisible to it.
+    let buried = Conversation(
+        id: UUID(), title: "How do I center a div", updatedAt: Date(),
+        messages: [
+            ChatMessage(role: .user, text: "How do I center a div"),
+            ChatMessage(role: .assistant, text: "Use flexbox with justify-content."),
+            ChatMessage(role: .user, text: "and the vertical axis?"),
+            ChatMessage(role: .assistant, text: "align-items: center handles that."),
+            ChatMessage(role: .user, text: "thanks"),
+            ChatMessage(role: .assistant, text: "You're welcome."),
+        ]
+    )
+    let other = Conversation(
+        id: UUID(), title: "Unrelated", updatedAt: Date().addingTimeInterval(-60),
+        messages: [ChatMessage(role: .user, text: "what time is it"),
+                   ChatMessage(role: .assistant, text: "Half past four.")]
+    )
+    ConversationStore.save(buried)
+    ConversationStore.save(other)
+
+    let index = ConversationStore.fullTextIndex()
+    log.check("indexes every conversation", index.count == 2, "count=\(index.count)")
+    let text = index[buried.id] ?? ""
+    log.check("index reaches mid-transcript text", text.contains("justify-content"))
+    log.check("index leaves other conversations out",
+          !(index[other.id] ?? "").contains("justify-content"))
+
+    let hit = index.filter { $0.value.localizedCaseInsensitiveContains("flexbox") }
+    log.check("body search finds the buried chat", hit.keys.first == buried.id, "hits=\(hit.count)")
+
+    let excerpt = ConversationStore.excerpt(of: text, matching: "flexbox") ?? ""
+    log.check("excerpt contains the needle", excerpt.localizedCaseInsensitiveContains("flexbox"),
+          "excerpt=\(excerpt)")
+    log.check("excerpt is one line", !excerpt.contains("\n"), "excerpt=\(excerpt)")
+    log.check("excerpt shows surrounding words", excerpt.contains("justify-content"), "excerpt=\(excerpt)")
+    log.check("excerpt of a miss is nil", ConversationStore.excerpt(of: text, matching: "zzzz") == nil)
+
+    // Reasoning is deliberately absent: it renders behind a collapsed
+    // disclosure, so a hit there would open a chat with nothing visibly matching.
+    let thinking = Conversation(
+        id: UUID(), title: "Thinker", updatedAt: Date().addingTimeInterval(-120),
+        messages: [
+            ChatMessage(role: .user, text: "question"),
+            ChatMessage(role: .assistant, text: "answer", reasoning: "SECRETTHOUGHT"),
+        ]
+    )
+    ConversationStore.save(thinking)
+    let reindexed = ConversationStore.fullTextIndex()
+    log.check("index excludes reasoning",
+          !(reindexed[thinking.id] ?? "").contains("SECRETTHOUGHT"))
+    log.check("reasoning survives the round trip",
+          ConversationStore.load(id: thinking.id)?.messages.last?.reasoning == "SECRETTHOUGHT")
+    log.check("⌘F does not count reasoning",
+          !MarkdownRenderer.searchableStrings(
+              for: ChatMessage(role: .assistant, text: "answer", reasoning: "SECRETTHOUGHT")
+          ).joined().contains("SECRETTHOUGHT"))
+
+    try? FileManager.default.removeItem(at: scratch)
+    log.finish()
+}
+
+// Update check: version ordering and release decoding (no network).
+if CommandLine.arguments.contains("--smoke-update") {
+    var log = CheckLog()
+
+    // The one that a string comparison gets wrong, and the reason this is
+    // component-wise: "0.1.10" < "0.1.9" lexically, and the tenth patch release
+    // is not a hypothetical.
+    log.check("0.1.10 is newer than 0.1.9", UpdateChecker.isNewer("0.1.10", than: "0.1.9"))
+    log.check("0.1.9 is not newer than 0.1.10", !UpdateChecker.isNewer("0.1.9", than: "0.1.10"))
+    log.check("equal versions are not newer", !UpdateChecker.isNewer("0.1.2", than: "0.1.2"))
+    log.check("1.0 beats 0.9.9", UpdateChecker.isNewer("1.0", than: "0.9.9"))
+    log.check("shorter equal prefix is not newer", !UpdateChecker.isNewer("0.1", than: "0.1.0"))
+    log.check("0.1.0.1 beats 0.1.0", UpdateChecker.isNewer("0.1.0.1", than: "0.1.0"))
+    // A prerelease of a version must never outrank that version's release.
+    log.check("0.2.0-beta.1 is not newer than 0.2.0", !UpdateChecker.isNewer("0.2.0-beta.1", than: "0.2.0"))
+
+    func payload(_ json: String) -> Data { Data(json.utf8) }
+    let good = UpdateChecker.decodeRelease(payload("""
+    {"tag_name":"v0.1.3","html_url":"https://github.com/lec77/PopChat/releases/tag/v0.1.3",
+     "draft":false,"prerelease":false}
+    """))
+    log.check("decodes the tag without its v", good?.version == "0.1.3", "version=\(good?.version ?? "-")")
+    log.check("decodes the release page", good?.page.absoluteString.hasSuffix("v0.1.3") == true)
+    log.check("bare tags decode too",
+          UpdateChecker.decodeRelease(payload("""
+          {"tag_name":"0.1.4","html_url":"https://example.test/r"}
+          """))?.version == "0.1.4")
+    log.check("prereleases are refused", UpdateChecker.decodeRelease(payload("""
+    {"tag_name":"v0.2.0","html_url":"https://example.test/r","prerelease":true}
+    """)) == nil)
+    log.check("drafts are refused", UpdateChecker.decodeRelease(payload("""
+    {"tag_name":"v0.2.0","html_url":"https://example.test/r","draft":true}
+    """)) == nil)
+    log.check("garbage is refused", UpdateChecker.decodeRelease(payload("not json")) == nil)
+    log.check("a tagless payload is refused", UpdateChecker.decodeRelease(payload("""
+    {"html_url":"https://example.test/r"}
+    """)) == nil)
+    log.check("the running version parses",
+          !UpdateChecker.isNewer(UpdateChecker.currentVersion, than: UpdateChecker.currentVersion))
+
+    log.finish()
+}
+
+// Reasoning: the wire spellings, and the waiting row's line (no network, no UI).
+if CommandLine.arguments.contains("--smoke-reasoning") {
+    var log = CheckLog()
+    func line(_ json: String) -> String { "data: \(json)" }
+
+    // Neither spelling is in the OpenAI schema, so a decoding regression looks
+    // exactly like "this model doesn't think" rather than like a bug — which is
+    // why both are pinned here.
+    let deepseek = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"reasoning_content":"weighing it"}}]}"#))
+    log.check("reasoning_content decodes", deepseek?.reasoning == "weighing it",
+          "got=\(String(describing: deepseek?.reasoning))")
+    let openrouter = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"reasoning":"weighing it"}}]}"#))
+    log.check("reasoning decodes", openrouter?.reasoning == "weighing it",
+          "got=\(String(describing: openrouter?.reasoning))")
+    let content = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"content":"hello"}}]}"#))
+    log.check("content still decodes", content?.content == "hello" && content?.reasoning == nil)
+
+    // The whole chunk is decoded with `try?`, so a provider that spells
+    // `reasoning` as an object would take the VISIBLE text down with it.
+    let objectShaped = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"content":"hello","reasoning":{"summary":"x"}}}]}"#))
+    log.check("an object-shaped reasoning field does not eat the content",
+          objectShaped?.content == "hello", "got=\(String(describing: objectShaped?.content))")
+    let nullShaped = OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"content":"hi","reasoning":null}}]}"#))
+    log.check("a null reasoning field does not eat the content", nullShaped?.content == "hi")
+    log.check("empty reasoning is not reported", OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"reasoning":""}}]}"#))?.reasoning == nil)
+
+    log.check("tool calls still decode", OpenAIChatClient.decodeDelta(line: line(
+        #"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_search"}}]}}]}"#)
+    )?.toolCalls.first?.function?.name == "web_search")
+    log.check("[DONE] is the sentinel", OpenAIChatClient.decodeDelta(line: "data: [DONE]")?.isDone == true)
+    log.check("non-data lines are skipped", OpenAIChatClient.decodeDelta(line: "event: ping") == nil)
+
+    // The waiting row shows thinking through a FIXED window that scrolls, so a
+    // chunk arriving can never change the row's height. That is the
+    // transcript-reflow rule the old one-line status enforced with
+    // lineLimit(1); a sized window gets it structurally, and shows two more
+    // lines. Measured through a real hosting view, not from the constants —
+    // the constants agreeing with themselves proves nothing.
+    MainActor.assumeIsolated {
+        func renderedHeight(_ text: String, lines: Int) -> CGFloat {
+            let host = NSHostingView(
+                rootView: ThinkingScroller(text: text, lines: lines).frame(width: 300)
+            )
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+        let collapsed = WaitingIndicator.collapsedLines
+        let oneLine = renderedHeight("a short thought", lines: collapsed)
+        let huge = renderedHeight(
+            String(repeating: "a much longer thought that wraps many times. ", count: 400),
+            lines: collapsed
+        )
+        log.check("the thinking window's height ignores its content", oneLine == huge,
+                  "short=\(oneLine) long=\(huge)")
+        log.check("three lines is taller than one",
+                  oneLine > renderedHeight("a short thought", lines: 1))
+        log.check("expanding shows more",
+                  renderedHeight("a short thought", lines: WaitingIndicator.expandedLines) > oneLine)
+    }
+
+    // Reasoning renders through the same SelectableText that measures itself
+    // with boundingRect, so its styling has to be metrics-neutral. It is not a
+    // theoretical rule: scaling the fonts down under the paragraph styles
+    // buildProse chose made the measurement come up one paragraph short, and
+    // the tail of the thinking was clipped with nothing to indicate it.
+    let sample = "**Heading**\n\nFirst thought about the problem.\n\nSecond thought.\n\nThird thought."
+    func height(_ string: NSAttributedString) -> CGFloat {
+        string.boundingRect(
+            with: NSSize(width: 320, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+    }
+    let reasoned = MarkdownRenderer.attributedReasoning(sample)
+    log.check("reasoning parses markdown", !reasoned.string.contains("**"), "got=\(reasoned.string.debugDescription)")
+    log.check("reasoning keeps every paragraph", reasoned.string.contains("Third thought"))
+    let delta = abs(height(MarkdownRenderer.attributedProse(sample)) - height(reasoned))
+    log.check("reasoning styling is metrics-neutral", delta < 0.5, "height delta=\(delta)")
+
+    log.finish()
+}
+
 // Attachment-loader check (no network): .build/debug/PopChat --smoke-file <path>
 if let flagIndex = CommandLine.arguments.firstIndex(of: "--smoke-file"),
    CommandLine.arguments.count > flagIndex + 1 {
@@ -613,6 +902,64 @@ if let flagIndex = CommandLine.arguments.firstIndex(of: "--smoke-file"),
         exit(0)
     }
     RunLoop.main.run()
+}
+
+/// Pass/fail tally shared by the check-list harnesses. Each law prints as it is
+/// evaluated, so a failing run says which one broke rather than just "FAIL".
+struct CheckLog {
+    private(set) var failures: [String] = []
+
+    mutating func check(
+        _ label: String, _ condition: Bool, _ detail: @autoclosure () -> String = ""
+    ) {
+        print("  \(condition ? "ok  " : "FAIL") \(label)\(condition ? "" : " — \(detail())")")
+        if !condition { failures.append(label) }
+    }
+
+    /// Prints the verdict and exits with it — every one of these harnesses ends
+    /// this way.
+    func finish() -> Never {
+        print(failures.isEmpty ? "PASS" : "FAIL (\(failures.count))")
+        exit(failures.isEmpty ? 0 : 1)
+    }
+}
+
+/// The panel's message input, found by walking the view tree.
+@MainActor
+func composerTextView(in view: NSView?) -> NSTextView? {
+    guard let view else { return nil }
+    if let textView = view as? NSTextView, textView.isEditable { return textView }
+    for sub in view.subviews { if let found = composerTextView(in: sub) { return found } }
+    return nil
+}
+
+/// A real keystroke: through the window, to whatever holds first responder.
+/// Harnesses synthesize rather than call methods directly so a lost first
+/// responder shows up as "the keystroke went nowhere", exactly as it does for
+/// the user.
+@MainActor
+func sendKey(
+    _ characters: String, keyCode: UInt16 = 0, modifiers: NSEvent.ModifierFlags = [],
+    to panel: NSWindow
+) -> Bool {
+    guard let event = NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+        windowNumber: panel.windowNumber, context: nil,
+        characters: characters, charactersIgnoringModifiers: characters,
+        isARepeat: false, keyCode: keyCode
+    ) else { return false }
+    panel.sendEvent(event)
+    return true
+}
+
+/// An arrow key, with the modifier flags AppKit really attaches to one.
+@MainActor
+func sendArrow(up: Bool, to panel: NSWindow) -> Bool {
+    let scalar = UnicodeScalar(up ? NSUpArrowFunctionKey : NSDownArrowFunctionKey)!
+    return sendKey(
+        String(scalar), keyCode: up ? 126 : 125,
+        modifiers: [.function, .numericPad], to: panel
+    )
 }
 
 /// Synthetic long-form conversation (prose/code/table/list/math) written into a
@@ -987,6 +1334,103 @@ if CommandLine.arguments.contains("--smoke-typing") {
     }
 }
 
+// ↑ in an empty composer recalls prompts you have sent; ↑ in a draft you are
+// writing must still move the caret. Real arrow-key events through the real
+// panel, because the whole feature is a key route: NSTextView turns ↑ into
+// moveUp: and the composer decides between the two meanings there.
+if CommandLine.arguments.contains("--smoke-recall") {
+    MainActor.assumeIsolated {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("popchat-recall-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        ConversationStore.overrideDirectory = scratch
+        let savedHistory = PromptHistory.entries
+        UserDefaults.standard.set(["short one", "a considerably longer older prompt"], forKey: "promptHistory")
+
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let controller = PanelController(providerStore: ProviderStore(), shortcutStore: ShortcutStore())
+        controller.show()
+
+        func cleanup() {
+            UserDefaults.standard.set(savedHistory, forKey: "promptHistory")
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        var log = CheckLog()
+        func fail(_ message: String) -> Never {
+            print("FAIL: \(message)")
+            cleanup()
+            exit(1)
+        }
+        @MainActor func arrow(_ up: Bool, into panel: NSWindow) {
+            if !sendArrow(up: up, to: panel) { fail("could not synthesize an arrow key") }
+        }
+        @MainActor func type(_ character: String, into panel: NSWindow) {
+            if !sendKey(character, to: panel) { fail("could not synthesize a keystroke") }
+        }
+
+        var step = 0
+        Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard let panel = app.windows.first(where: { $0 is FloatingPanel }) else { fail("no panel") }
+                guard let field = composerTextView(in: panel.contentView) else { fail("no composer field") }
+                step += 1
+                switch step {
+                case 1:
+                    panel.makeFirstResponder(field)
+                case 2:
+                    log.check("starts empty", field.string.isEmpty, "draft=\(field.string.debugDescription)")
+                    arrow(true, into: panel)
+                case 3:
+                    log.check("↑ recalls the newest prompt", field.string == "short one",
+                          "draft=\(field.string.debugDescription)")
+                    // The caret must follow the text, or typing continues from
+                    // wherever the old draft's offset happened to be.
+                    log.check("caret lands at the end",
+                          field.selectedRange().location == (field.string as NSString).length,
+                          "caret=\(field.selectedRange().location) of \((field.string as NSString).length)")
+                    arrow(true, into: panel)
+                case 4:
+                    log.check("↑ again walks further back", field.string == "a considerably longer older prompt",
+                          "draft=\(field.string.debugDescription)")
+                    log.check("caret follows a LONGER recalled prompt",
+                          field.selectedRange().location == (field.string as NSString).length,
+                          "caret=\(field.selectedRange().location) of \((field.string as NSString).length)")
+                    arrow(true, into: panel)
+                case 5:
+                    log.check("↑ at the oldest stays put", field.string == "a considerably longer older prompt",
+                          "draft=\(field.string.debugDescription)")
+                    arrow(false, into: panel)
+                case 6:
+                    log.check("↓ walks back toward now", field.string == "short one",
+                          "draft=\(field.string.debugDescription)")
+                    log.check("caret follows a SHORTER recalled prompt",
+                          field.selectedRange().location == (field.string as NSString).length,
+                          "caret=\(field.selectedRange().location) of \((field.string as NSString).length)")
+                    arrow(false, into: panel)
+                case 7:
+                    log.check("↓ past the newest restores the empty composer", field.string.isEmpty,
+                          "draft=\(field.string.debugDescription)")
+                    type("x", into: panel)
+                case 8:
+                    log.check("typing still lands", field.string == "x", "draft=\(field.string.debugDescription)")
+                    arrow(true, into: panel)
+                case 9:
+                    // The law that keeps ↑ usable at all: recall may only START
+                    // from an empty composer, or a half-typed draft is eaten and
+                    // a multi-line one becomes uneditable.
+                    log.check("↑ in a draft does not recall", field.string == "x",
+                          "draft=\(field.string.debugDescription)")
+                    cleanup()
+                    log.finish()
+                default:
+                    fail("harness ran past its steps")
+                }
+            }
+        }
+        app.run()
+    }
+}
+
 // Composer keeps focus when messages appear: types into the empty panel, sends,
 // then types again — through real key events, so a lost first responder shows up
 // as "the keystroke went nowhere" exactly as it does for the user. `/nope` is an
@@ -1035,21 +1479,8 @@ if CommandLine.arguments.contains("--smoke-input") {
             cleanup()
             exit(1)
         }
-        func composer(in view: NSView?) -> NSTextView? {
-            guard let view else { return nil }
-            if let textView = view as? NSTextView, textView.isEditable { return textView }
-            for sub in view.subviews { if let found = composer(in: sub) { return found } }
-            return nil
-        }
-        // A real keystroke: through the window, to whatever holds first responder.
-        func type(_ character: String, into panel: NSWindow) {
-            guard let event = NSEvent.keyEvent(
-                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                windowNumber: panel.windowNumber, context: nil,
-                characters: character, charactersIgnoringModifiers: character,
-                isARepeat: false, keyCode: 0
-            ) else { fail("could not synthesize a keystroke") }
-            panel.sendEvent(event)
+        @MainActor func type(_ character: String, into panel: NSWindow) {
+            if !sendKey(character, to: panel) { fail("could not synthesize a keystroke") }
         }
 
         var step = 0
@@ -1067,18 +1498,18 @@ if CommandLine.arguments.contains("--smoke-input") {
                 switch step {
                 case 1: return // settle
                 case 2:
-                    guard let field = composer(in: panel.contentView) else { fail("no composer field") }
+                    guard let field = composerTextView(in: panel.contentView) else { fail("no composer field") }
                     panel.makeFirstResponder(field)
                     focusedBefore = field
                     type("a", into: panel)
                 case 3:
-                    guard let field = composer(in: panel.contentView) else { fail("composer vanished") }
+                    guard let field = composerTextView(in: panel.contentView) else { fail("composer vanished") }
                     if field.string != "a" { fail("baseline typing did not reach the composer (draft=\(field.string.debugDescription))") }
                     controller.chatStore.send("/nope") // rows appear, panel grows
                 case 4...5:
                     return // let the growth animation and layout settle
                 case 6:
-                    guard let field = composer(in: panel.contentView) else { fail("composer vanished after send") }
+                    guard let field = composerTextView(in: panel.contentView) else { fail("composer vanished after send") }
                     let same = field === focusedBefore
                     let isFirst = panel.firstResponder === field
                     print("after send: sameTextView=\(same) firstResponder=\(isFirst) rows=\(controller.chatStore.messages.count)")
@@ -1103,7 +1534,7 @@ if CommandLine.arguments.contains("--smoke-input") {
                     markedString = field.string
                     controller.chatStore.send("/nope again") // rows appear → transcript re-renders
                 case 7:
-                    guard let field = composer(in: panel.contentView) else { fail("composer vanished mid-composition") }
+                    guard let field = composerTextView(in: panel.contentView) else { fail("composer vanished mid-composition") }
                     if !field.hasMarkedText() {
                         fail("IME composition was cancelled by a transcript update — "
                              + "marked text lost (was \(markedString.debugDescription), now \(field.string.debugDescription))")
@@ -1130,7 +1561,7 @@ if CommandLine.arguments.contains("--smoke-input") {
                     controller.chatStore.send("Write about 250 words on the history of the fountain pen.")
                 default:
                     guard CommandLine.arguments.contains("--live") else { fail("harness ran past its steps") }
-                    guard let field = composer(in: panel.contentView) else { fail("composer vanished mid-stream") }
+                    guard let field = composerTextView(in: panel.contentView) else { fail("composer vanished mid-stream") }
                     // Wait for the reply to start, then type one character per tick.
                     let reply = controller.chatStore.messages.last(where: { $0.role == .assistant })?.text ?? ""
                     if reply.isEmpty {
@@ -1252,7 +1683,7 @@ if CommandLine.arguments.contains("--smoke-history") {
         func filterField() -> NSTextField? {
             var found: NSTextField?
             func walk(_ view: NSView) {
-                if let field = view as? NSTextField, field.placeholderString == "Filter chats…" { found = field }
+                if let field = view as? NSTextField, field.placeholderString == "Search chats…" { found = field }
                 for sub in view.subviews where found == nil { walk(sub) }
             }
             // Visible windows only: a dismissed popover keeps its window (and
@@ -2013,7 +2444,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
         let providerKeys = [
             "providersJSON", "selectedProviderID", "knownModelsJSON", "selectedModelsJSON",
             "knownModelEffortsJSON", "defaultModelEffortsJSON", "selectedModelEffortsJSON",
-            "accentColor", "customAccentColor", "bubbleStyle",
+            "accentColor", "customAccentColor", "bubbleStyle", "liquidGlass",
         ]
         let snapshot = providerKeys.reduce(into: [String: Any?]()) { $0[$1] = defaults.object(forKey: $1) }
         func restore() {
@@ -2074,18 +2505,79 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             size = NSSize(width: which == "switcher-effort" ? 530 : 412, height: 340)
         case "general":
             content = NSHostingView(rootView: SettingsView(
-                store: store, shortcutStore: ShortcutStore(), tab: .general
+                store: store, shortcutStore: ShortcutStore(),
+                updates: UpdateChecker(), tab: .general
             ))
             size = NSSize(width: 540, height: 620)
+        case "thinking":
+            // The waiting row mid-think, so the scrolling window and its expand
+            // control can be eyeballed. Rendered directly — it is a plain view,
+            // so this needs no production seam and no live provider.
+            let thought = """
+            **Considering the physics**
+
+            Rayleigh scattering goes as 1/λ⁴, so shorter wavelengths scatter far more \
+            than longer ones. That is why the daytime sky reads blue rather than violet — \
+            the eye's sensitivity peaks away from violet, and some of it is absorbed high up.
+
+            The answer should stay short: this is a quick-chat panel, not an optics lecture.
+            """
+            content = NSHostingView(rootView: VStack(alignment: .leading, spacing: 16) {
+                WaitingIndicator(status: "Thinking…", reasoning: thought)
+                Divider()
+                // The expanded window, which the shot cannot click into.
+                ThinkingScroller(text: thought, lines: WaitingIndicator.expandedLines)
+                Divider()
+                WaitingIndicator(status: "Starting Codex…")
+            }
+                .padding(20)
+                .frame(width: 460, alignment: .leading)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            size = NSSize(width: 460, height: 420)
         case "accent":
             content = NSHostingView(rootView: AccentPickerPopover(
                 accentHex: .constant("#E0655B"), customHex: .constant("#E0655B")
             )
                 .background(Color(nsColor: .windowBackgroundColor)))
             size = NSSize(width: 268, height: 190)
+        case "transcript":
+            // A finished turn with thinking attached, so the reasoning
+            // disclosure and the last row's Retry / Edit prompt actions can be
+            // eyeballed without driving a live provider. A scratch store keeps
+            // the synthetic conversation out of the real history.
+            //
+            // Solid panel, like --smoke-notice: an offscreen bitmap has no
+            // backdrop for glass to composite against, so the dark rendering
+            // comes out as a white fog (the light one only looks fine by luck).
+            defaults.set(false, forKey: "liquidGlass")
+            let scratch = FileManager.default.temporaryDirectory
+                .appendingPathComponent("popchat-shot-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            ConversationStore.overrideDirectory = scratch
+            // Seeded the supported way — saved to the scratch store, then
+            // resumed by ChatStore.init like every other transcript harness.
+            // That also makes the shot exercise `adopt`, the restore reveal and
+            // the round-trip decode of `reasoning`, rather than bypassing them.
+            ConversationStore.save(Conversation(
+                id: UUID(), title: "Why is the sky blue?", updatedAt: Date(),
+                messages: [
+                    ChatMessage(role: .user, text: "Why is the sky blue?"),
+                    ChatMessage(
+                        role: .assistant,
+                        text: "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
+                        reasoning: "**Considering the physics**\n\nRayleigh scattering goes as 1/λ⁴, so blue scatters far more than red.\n\nThe answer should stay short — this is a quick-chat panel."
+                    ),
+                ]
+            ))
+            let chatStore = ChatStore(providerStore: store, shortcutStore: ShortcutStore())
+            content = NSHostingView(rootView: ChatView(
+                state: PanelState(), store: chatStore, providerStore: store,
+                shortcutStore: ShortcutStore(), onClose: {}
+            ))
+            size = NSSize(width: 560, height: 420)
         default:
             content = NSHostingView(rootView: SettingsView(
-                store: store, shortcutStore: ShortcutStore(), tab: .providers, editing: groq.id
+                store: store, shortcutStore: ShortcutStore(),
+                updates: UpdateChecker(), tab: .providers, editing: groq.id
             ))
             size = NSSize(width: 540, height: 620)
         }

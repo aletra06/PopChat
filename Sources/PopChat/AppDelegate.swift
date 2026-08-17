@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let providerStore = ProviderStore()
     private let shortcutStore = ShortcutStore()
+    private let updateChecker = UpdateChecker()
     private lazy var panelController = PanelController(providerStore: providerStore, shortcutStore: shortcutStore)
     private var settingsWindow: NSWindow?
 
@@ -58,6 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.panelController.prewarm()
             self?.presentLaunchUI(loginItem: loginItem)
+        }
+
+        // Not in the prewarm block: launch has nothing to gain from it, and the
+        // check has no deadline. Nothing else reaches the network this early.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            MainActor.assumeIsolated { self?.updateChecker.checkIfDue() }
         }
     }
 
@@ -128,6 +135,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        // The one ambient surface for a new version. It appears only when there
+        // IS one, so the menu is unchanged for everybody who is current.
+        if let release = updateChecker.availableRelease {
+            let updateItem = NSMenuItem(
+                title: "Update available: \(release.version)…",
+                action: #selector(openReleasePage), keyEquivalent: ""
+            )
+            updateItem.target = self
+            menu.addItem(updateItem)
+            menu.addItem(.separator())
+        }
+
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -144,6 +163,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel() {
         panelController.toggle()
+    }
+
+    /// PopChat never installs anything itself — this hands the user off to the
+    /// release page, where the DMG they already know how to use is waiting.
+    @objc private func openReleasePage() {
+        guard let release = updateChecker.availableRelease else { return }
+        NSWorkspace.shared.open(release.page)
     }
 
     /// Clicking into another app dismisses ALL of PopChat — Settings included.
@@ -219,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 defer: false
             )
             window.title = "PopChat Settings"
-            window.contentView = NSHostingView(rootView: SettingsView(store: providerStore, shortcutStore: shortcutStore))
+            window.contentView = NSHostingView(rootView: SettingsView(store: providerStore, shortcutStore: shortcutStore, updates: updateChecker))
             window.isReleasedWhenClosed = false
             // The chat panel floats (.floating level); a normal-level Settings
             // window would always open BEHIND it. Same level + orderFront wins.

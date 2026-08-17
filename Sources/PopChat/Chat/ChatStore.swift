@@ -17,6 +17,12 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     /// (slash-command expansion). Nil means `text` is the wire text.
     var wireText: String?
     var attachments: [Attachment] = []
+    /// The model's thinking for an assistant turn, when the provider streams it.
+    /// Persisted with the message (so reopening a chat keeps it) but never sent
+    /// back: chat-completions history carries the answer only, and echoing a
+    /// summary as if the model had said it would corrupt the next turn.
+    /// Optional so conversations written before this existed still decode.
+    var reasoning: String?
 }
 
 @MainActor
@@ -28,8 +34,32 @@ final class ChatStore: ObservableObject {
     /// the moment visible text arrives and at the end of every turn — it must
     /// never outlive the wait it describes.
     @Published private(set) var pendingStatus: String?
+    /// The turn's thinking so far, while the reply is still empty — what the
+    /// waiting row scrolls. Same lifecycle as `pendingStatus` (transient,
+    /// empty-row-only, cleared on first text / turn end / stop); the durable
+    /// copy is committed to `ChatMessage.reasoning` separately.
+    @Published private(set) var pendingReasoning: String?
     @Published private(set) var recent: [ConversationMeta] = []
     private(set) var conversationID = UUID()
+
+    /// Cross-chat search corpus, built once and reused until the stored set
+    /// changes. It lives here rather than in the history popover because this is
+    /// what knows when a conversation is written or deleted; rebuilding it per
+    /// ⌘Y meant re-decoding every transcript — attachment base64 and all — on a
+    /// keystroke-frequency user action.
+    private var searchCorpus: [UUID: String]?
+
+    /// Resolved text of every stored conversation, for the history popover's
+    /// body search. Built off the main actor on first use after any change, so
+    /// the popover's designed pop-in never waits on disk.
+    func searchableText() async -> [UUID: String] {
+        if let searchCorpus { return searchCorpus }
+        let corpus = await Task.detached(priority: .userInitiated) {
+            ConversationStore.fullTextIndex()
+        }.value
+        searchCorpus = corpus
+        return corpus
+    }
 
     /// Bumped whenever a STORED conversation replaces the current one (history
     /// pick, launch resume) — as opposed to messages arriving by chat. Drives the
@@ -168,6 +198,11 @@ final class ChatStore: ObservableObject {
     func send(_ text: String, attachments: [Attachment] = []) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, !isStreaming else { return }
+        // Recorded here rather than in the composer: this is where a prompt
+        // becomes a SENT prompt, so ↑ also offers back anything a retry or a
+        // future send path put through. Before the guards below, because a send
+        // that fails is exactly one you want to recall and fix.
+        PromptHistory.record(text)
         // A previous reply may still be typing itself out; complete it instantly
         // rather than letting the new turn's rows appear above a half-revealed one.
         flushTypewriter()
@@ -301,15 +336,37 @@ final class ChatStore: ObservableObject {
         streamTask = Task {
             // The streaming assistant row stays last; activity rows are inserted above it.
             var assistantIndex = messages.count - 1
+            var reasoning = ""
+            var reasoningShown = false
             for await event in stream {
                 switch event {
                 case .partial(let text), .done(let text):
                     streamTarget = text
-                    // The wait this described is over — real text is arriving.
-                    if !text.isEmpty { pendingStatus = nil }
+                    // The wait these described is over — real text is arriving.
+                    if !text.isEmpty {
+                        pendingStatus = nil
+                        pendingReasoning = nil
+                        // Hand the thinking over to the message's own disclosure
+                        // as the waiting row stops showing it, so it stays
+                        // visible for the whole answer rather than reappearing
+                        // when the turn ends. Once per turn, not per chunk.
+                        if !reasoning.isEmpty, !reasoningShown {
+                            reasoningShown = true
+                            commit(reasoning: reasoning, to: assistantMessage.id)
+                        }
+                    }
                     startDrain(messageID: assistantMessage.id, mode: typewriter)
                 case .status(let text):
                     pendingStatus = text
+                case .reasoning(let text):
+                    // The visible copy: a plain @Published string, NOT a write
+                    // into `messages`. Publishing the array per chunk would
+                    // COW-copy it and re-diff every row many times a second; the
+                    // waiting row is the only thing that reads this, and it is
+                    // Equatable-gated to itself. The durable copy is committed
+                    // once, where the answer takes over.
+                    reasoning = text
+                    pendingReasoning = text
                 case .activity(let text):
                     messages.insert(ChatMessage(role: .activity, text: text), at: assistantIndex)
                     assistantIndex += 1
@@ -345,6 +402,7 @@ final class ChatStore: ObservableObject {
             // had actually arrived.
             isStreaming = false
             pendingStatus = nil
+            pendingReasoning = nil
             await drainTask?.value
             // "Still ours": flushTypewriter() clears streamingMessageID when a new
             // turn takes over mid-reveal, so this must not clobber its bookkeeping.
@@ -360,11 +418,23 @@ final class ChatStore: ObservableObject {
                     messages.remove(at: index)
                 } else {
                     messages[index].text = finalText
+                    // The turn's final thinking. Also runs on Stop (cancelling
+                    // the stream ends the loop, not the tail), so a stopped turn
+                    // keeps the reasoning it had produced, and it picks up
+                    // anything a tool loop thought after the first text.
+                    if !reasoning.isEmpty { messages[index].reasoning = reasoning }
                 }
             }
             if stillOurs { streamingMessageID = nil }
             persist()
         }
+    }
+
+    /// Writes a turn's thinking onto its assistant row, by id — a new turn can
+    /// already have appended rows by the time this runs.
+    private func commit(reasoning: String, to messageID: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        messages[index].reasoning = reasoning
     }
 
     /// Typewriter reveal speed. The per-tick step is this divided by the tick rate,
@@ -634,9 +704,10 @@ final class ChatStore: ObservableObject {
 
     func stop() {
         streamTask?.cancel()
-        // Don't wait for the cancelled task's tail to clear it — the waiting row
-        // must not keep pulsing "Reasoning…" after the user said stop.
+        // Don't wait for the cancelled task's tail to clear these — the waiting
+        // row must not keep pulsing "Reasoning…" after the user said stop.
         pendingStatus = nil
+        pendingReasoning = nil
         flushTypewriter()
     }
 
@@ -690,7 +761,82 @@ final class ChatStore: ObservableObject {
         persist()
     }
 
+    // MARK: - Re-running the last turn
+
+    /// The last user message, if there is one and nothing is in flight — the
+    /// turn both Retry and Edit act on. Only the LAST turn is re-runnable on
+    /// purpose: re-running an earlier one would silently discard every message
+    /// after it, and the non-destructive way to revisit an earlier point in a
+    /// conversation already exists (Fork).
+    private var lastUserIndex: Int? {
+        guard !isStreaming else { return nil }
+        return messages.lastIndex { $0.role == .user }
+    }
+
+    var canRerunLastTurn: Bool { lastUserIndex != nil }
+
+    /// Re-send the last user message unchanged, dropping whatever it produced.
+    /// The provider and model are resolved fresh by `send`, so switching the
+    /// pill and hitting Retry is how you ask a different model the same thing.
+    ///
+    /// Retry IS Edit-without-the-editing, so it goes through the same take —
+    /// one place has to keep the truncate-before-resend order right.
+    func retryLastTurn() {
+        guard let prompt = takeLastUserMessageForEditing() else { return }
+        // The display text, not `wireText`: send() re-expands a slash command
+        // from it, so a retry of "/explain foo" resolves against the CURRENT
+        // template rather than freezing the one that ran the first time.
+        send(prompt.text, attachments: prompt.attachments)
+    }
+
+    /// Pull the last user message back out of the transcript for editing,
+    /// dropping it and its reply. The caller owns putting it in the composer;
+    /// nothing is re-sent until the user sends it.
+    func takeLastUserMessageForEditing() -> (text: String, attachments: [Attachment])? {
+        guard let index = lastUserIndex else { return nil }
+        let prompt = messages[index]
+        truncate(to: index)
+        return (prompt.text, prompt.attachments)
+    }
+
+    /// Cut the transcript down to its first `count` messages.
+    ///
+    /// Two things have to happen before anything is dropped, or the tree breaks:
+    /// direct children are MATERIALIZED (they resolve against the transcript
+    /// being cut — the same never-orphan-a-fork rule that governs deletion), and
+    /// a cut reaching into the shared prefix makes this conversation standalone,
+    /// since its own file stores only the tail and could not otherwise represent
+    /// a shorter history than its parent's.
+    private func truncate(to count: Int) {
+        guard count < messages.count else { return }
+        // A reply may still be typing itself out; freeze it before persisting,
+        // or the partial text is what the children absorb (the fork(at:) trap).
+        stop()
+        persist()
+        // Unconditional, and it stays that way. Skipping this when no meta in
+        // `recent` is a fork was tried and reverted: it makes never-orphan-a-fork
+        // depend on `recent` mirroring the store exactly, and the failure mode of
+        // that drifting is silent loss of a branch. The cost is one full decode
+        // on a click, which is the cheaper side of that trade.
+        ConversationStore.materializeChildren(of: conversationID)
+        if count < sharedPrefixCount {
+            forkParentID = nil
+            forkMessageID = nil
+            sharedPrefixCount = 0
+        }
+        messages = Array(messages.prefix(count))
+        if messages.isEmpty {
+            // persist() skips empty conversations, so the file would otherwise
+            // keep serving the pre-truncation transcript to the next launch.
+            ConversationStore.delete(id: conversationID)
+            recent.removeAll { $0.id == conversationID }
+        } else {
+            persist()
+        }
+    }
+
     func deleteConversation(_ id: UUID) {
+        searchCorpus = nil
         ConversationStore.deleteMaterializingChildren(id: id)
         recent = ConversationStore.listRecent()
         if id == conversationID {
@@ -735,6 +881,7 @@ final class ChatStore: ObservableObject {
     /// empty conversations (avoids junk files).
     private func persist() {
         guard !messages.isEmpty else { return }
+        searchCorpus = nil // the stored set changed; rebuild on the next search
         let title = Self.title(for: messages)
         let conversation = Conversation(
             id: conversationID,

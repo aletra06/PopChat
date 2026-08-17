@@ -29,6 +29,26 @@ struct HistoryPopover: View {
     @State private var isClosing = false
     /// The row flashing accent under the press (5d), ahead of the dismiss.
     @State private var pressedID: UUID?
+    /// Every stored transcript, flattened for content search. Fetched from the
+    /// store (which caches it across presentations) AFTER the popover is on
+    /// screen — 5c: it opens at its final size and must not wait on disk — so
+    /// title matching works from the first keystroke and body matching joins a
+    /// moment later.
+    @State private var fullText: [UUID: String] = [:]
+    /// The filter applied, computed ONCE per change. Every consumer — the empty
+    /// check, the row list, and the height sum that must agree with it — reads
+    /// this. Recomputing per access meant matching all fifty transcripts about
+    /// seven times per keystroke, and once more on every hover.
+    @State private var results: [Result] = []
+
+    struct Result: Identifiable {
+        let meta: ConversationMeta
+        /// The row's second line: the stored snippet, or the text around a body
+        /// hit. Resolved here so the row and its fixed height agree by
+        /// construction rather than by calling the same function twice.
+        let subtitle: String
+        var id: UUID { meta.id }
+    }
 
     /// Fixed geometry, so the popover's height is known before it is presented
     /// and never changes afterwards (5c).
@@ -70,10 +90,16 @@ struct HistoryPopover: View {
         // already focused on open, so this re-focuses and selects it.
         .keyCommand("f") { filterFocusBump += 1 }
         .onAppear {
+            recompute()
             selectedID = visible.first?.id
             appeared = true
+            loadFullText()
         }
-        .onChange(of: filter) { _, _ in selectedID = visible.first?.id }
+        .onChange(of: filter) { _, _ in
+            recompute()
+            selectedID = visible.first?.id
+        }
+        .onChange(of: store.recent) { _, _ in recompute() }
     }
 
     // The filter row lands with the shell — only the list rows cascade.
@@ -84,7 +110,7 @@ struct HistoryPopover: View {
                 .foregroundStyle(.secondary)
             KeyRoutingTextField(
                 text: $filter,
-                placeholder: "Filter chats…",
+                placeholder: "Search chats…",
                 focusBump: filterFocusBump,
                 onMoveUp: { moveSelection(-1) },
                 onMoveDown: { moveSelection(1) },
@@ -135,8 +161,8 @@ struct HistoryPopover: View {
                 .textCase(.uppercase)
                 .padding(.horizontal, 8)
                 .frame(height: Metrics.groupHeader, alignment: .bottomLeading)
-        case let .chat(meta):
-            row(meta)
+        case let .chat(result):
+            row(result)
         }
     }
 
@@ -191,12 +217,13 @@ struct HistoryPopover: View {
     }
 
     private func openSelected() -> Bool {
-        guard let meta = visible.first(where: { $0.id == selectedID }) ?? visible.first else { return true }
-        open(meta)
+        guard let result = visible.first(where: { $0.id == selectedID }) ?? visible.first else { return true }
+        open(result.meta)
         return true
     }
 
-    private func row(_ meta: ConversationMeta) -> some View {
+    private func row(_ result: Result) -> some View {
+        let meta = result.meta
         let isCurrent = meta.id == store.conversationID
         let isHovered = hoveredID == meta.id
         let isSelected = selectedID == meta.id
@@ -241,8 +268,13 @@ struct HistoryPopover: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.primary.opacity(0.45))
                 }
-                if !meta.snippet.isEmpty {
-                    Text(meta.snippet)
+                if !result.subtitle.isEmpty {
+                    // Painted with the same highlighter as ⌘F, so a body hit
+                    // shows WHERE it matched rather than just that it did.
+                    Text(FindHighlight.paint(
+                        result.subtitle,
+                        find: filter.isEmpty ? nil : TextFind(query: filter, active: nil)
+                    ))
                         .font(.system(size: 11))
                         .foregroundStyle(.primary.opacity(0.55))
                         .lineLimit(1)
@@ -251,7 +283,7 @@ struct HistoryPopover: View {
             .padding(.horizontal, 8)
             // Fixed height, not padding: the popover's total height is computed
             // from these before it is presented (5c).
-            .frame(height: rowHeight(meta), alignment: .leading)
+            .frame(height: rowHeight(result), alignment: .leading)
             .background(
                 isPressed ? Theme.color(accentHex).opacity(0.34)
                     : isCurrent ? Theme.color(accentHex).opacity(0.16)
@@ -282,51 +314,79 @@ struct HistoryPopover: View {
 
     // MARK: - Grouping & geometry
 
-    private var filtered: [ConversationMeta] {
-        guard !filter.isEmpty else { return store.recent }
-        return store.recent.filter {
-            $0.title.localizedCaseInsensitiveContains(filter)
-                || $0.snippet.localizedCaseInsensitiveContains(filter)
+    /// Asks the store for the search corpus. Started from onAppear rather than
+    /// lazily on first keystroke, so results never arrive one keystroke late.
+    private func loadFullText() {
+        Task {
+            fullText = await store.searchableText()
+            recompute()
+        }
+    }
+
+    /// The single matching pass. Title, snippet, or anything said in the
+    /// conversation — the body match is what makes this a search rather than a
+    /// filter, since "the chat where I worked out the regex" is remembered by
+    /// its content, never by its first line, which is all the title ever holds.
+    private func recompute() {
+        let query = filter
+        results = store.recent.compactMap { meta in
+            guard !query.isEmpty else { return Result(meta: meta, subtitle: meta.snippet) }
+            if meta.title.localizedCaseInsensitiveContains(query)
+                || meta.snippet.localizedCaseInsensitiveContains(query) {
+                return Result(meta: meta, subtitle: meta.snippet)
+            }
+            // A result whose visible line doesn't contain what you searched for
+            // reads as a bug, so a body hit shows the text AROUND the match.
+            guard let text = fullText[meta.id],
+                  text.localizedCaseInsensitiveContains(query) else { return nil }
+            return Result(
+                meta: meta,
+                subtitle: ConversationStore.excerpt(of: text, matching: query) ?? meta.snippet
+            )
         }
     }
 
     /// What actually renders — the render cap applies here so keyboard selection
     /// can never land on a row that isn't on screen.
-    private var visible: [ConversationMeta] {
-        Array(filtered.prefix(Metrics.renderCap))
+    private var visible: [Result] {
+        Array(results.prefix(Metrics.renderCap))
     }
 
     /// Day headers and rows flattened into one list, so the height math is a sum.
     private enum ListItem {
         case header(String, key: String)
-        case chat(ConversationMeta)
+        case chat(Result)
 
         var id: String {
             switch self {
             case let .header(_, key): "h:\(key)"
-            case let .chat(meta): "c:\(meta.id.uuidString)"
+            case let .chat(result): "c:\(result.id.uuidString)"
             }
         }
     }
 
     private var items: [ListItem] {
         let calendar = Calendar.current
-        var result: [ListItem] = []
+        var list: [ListItem] = []
         var lastKey: String?
-        for meta in visible {
-            let day = calendar.startOfDay(for: meta.updatedAt)
+        for result in visible {
+            let day = calendar.startOfDay(for: result.meta.updatedAt)
             let key = day.formatted(.iso8601.year().month().day())
             if key != lastKey {
-                result.append(.header(groupTitle(for: meta.updatedAt, calendar: calendar), key: key))
+                list.append(.header(groupTitle(for: result.meta.updatedAt, calendar: calendar), key: key))
                 lastKey = key
             }
-            result.append(.chat(meta))
+            list.append(.chat(result))
         }
-        return result
+        return list
     }
 
-    private func rowHeight(_ meta: ConversationMeta) -> CGFloat {
-        meta.snippet.isEmpty ? Metrics.rowPlain : Metrics.rowWithSnippet
+    /// Keyed on the SAME string the row renders — both come from one `Result` —
+    /// because the popover's total height is a sum of these computed before
+    /// presentation (5c), and the two must never disagree about whether a second
+    /// line exists.
+    private func rowHeight(_ result: Result) -> CGFloat {
+        result.subtitle.isEmpty ? Metrics.rowPlain : Metrics.rowWithSnippet
     }
 
     /// The list's presented height: the exact content height, capped. Known
@@ -337,7 +397,7 @@ struct HistoryPopover: View {
         let content = items.reduce(0) { total, item in
             switch item {
             case .header: total + Metrics.groupHeader
-            case let .chat(meta): total + rowHeight(meta)
+            case let .chat(result): total + rowHeight(result)
             }
         }
         let spacing = Metrics.itemSpacing * CGFloat(items.count - 1)

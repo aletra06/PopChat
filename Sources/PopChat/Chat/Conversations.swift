@@ -108,13 +108,20 @@ enum ConversationStore {
         return (conversation, messages, missingParent)
     }
 
-    /// Delete with fork safety: direct children absorb the shared prefix and
-    /// become standalone roots before the parent's file is removed.
-    static func deleteMaterializingChildren(id: UUID) {
+    /// Direct children of `id` absorb the shared prefix and become standalone
+    /// roots. Call before a conversation's transcript stops being able to serve
+    /// them — deletion, pruning, or a truncation that cuts away a fork point.
+    static func materializeChildren(of id: UUID) {
         let all = loadAll()
         for child in all.values where child.parentID == id {
             materialize(child, in: all)
         }
+    }
+
+    /// Delete with fork safety: direct children absorb the shared prefix and
+    /// become standalone roots before the parent's file is removed.
+    static func deleteMaterializingChildren(id: UUID) {
+        materializeChildren(of: id)
         delete(id: id)
     }
 
@@ -124,6 +131,21 @@ enum ConversationStore {
         standalone.parentID = nil
         standalone.forkMessageID = nil
         save(standalone)
+    }
+
+    /// Every stored conversation with its transcript already resolved through
+    /// the fork chain — the one walk `listRecent` and `fullTextIndex` both need,
+    /// memoized so a chain shared by several forks is resolved once.
+    private static func loadAllResolved() -> (all: [UUID: Conversation], resolved: [UUID: [ChatMessage]]) {
+        let all = loadAll()
+        var resolved: [UUID: [ChatMessage]] = [:]
+        for conversation in all.values {
+            guard resolved[conversation.id] == nil else { continue }
+            (resolved[conversation.id], _) = resolveMessages(
+                conversation, lookup: { all[$0] }, visited: [conversation.id]
+            )
+        }
+        return (all, resolved)
     }
 
     private static func loadAll() -> [UUID: Conversation] {
@@ -139,24 +161,58 @@ enum ConversationStore {
         return result
     }
 
+    // MARK: - Cross-conversation search
+
+    /// Every stored conversation's resolved transcript, flattened to one
+    /// searchable string each, for the history popover's content search.
+    ///
+    /// A full linear read, deliberately: the store is capped at `maxStored`, so
+    /// this is a bounded scan rather than an index that can drift out of sync
+    /// with the files. It is also why the popover builds it OFF the main actor
+    /// after presenting — decoding fifty transcripts is milliseconds, but not
+    /// zero, and the popover's designed pop-in must never wait on it.
+    ///
+    /// Reasoning is excluded: it lives behind a collapsed disclosure, so a hit
+    /// there would send the user to a chat with nothing visibly matching.
+    static func fullTextIndex() -> [UUID: String] {
+        loadAllResolved().resolved.mapValues { messages in
+            messages
+                .filter { $0.role == .user || $0.role == .assistant }
+                .map(\.text)
+                .joined(separator: "\n")
+        }
+    }
+
+    /// The text around the first case-insensitive hit, for a search result row:
+    /// enough before it to read as a sentence, tail-padded, newlines collapsed
+    /// so it stays exactly one line (the popover's row heights are fixed).
+    ///
+    /// The match comes from `FindHighlight.ranges` — the same matcher whose
+    /// options decide what the row then PAINTS. Spelling the search out here
+    /// again is how an excerpt ends up containing a "hit" the painter won't tint.
+    static func excerpt(of text: String, matching query: String, context: Int = 44) -> String? {
+        guard let first = FindHighlight.ranges(in: text, query: query).first,
+              let range = Range(first, in: text) else { return nil }
+        let start = text.index(range.lowerBound, offsetBy: -context, limitedBy: text.startIndex)
+        let end = text.index(range.upperBound, offsetBy: context * 2, limitedBy: text.endIndex)
+        var excerpt = String(text[(start ?? text.startIndex)..<(end ?? text.endIndex)])
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        if start != nil, start != text.startIndex { excerpt = "…" + excerpt }
+        if end != nil, end != text.endIndex { excerpt += "…" }
+        return excerpt
+    }
+
     /// Newest first, snippets from the fully-resolved transcript. Also prunes
     /// storage beyond `maxStored` (materializing children of pruned parents).
     static func listRecent() -> [ConversationMeta] {
-        let all = loadAll()
-        var resolvedCache: [UUID: [ChatMessage]] = [:]
-        func resolved(_ conversation: Conversation) -> [ChatMessage] {
-            if let cached = resolvedCache[conversation.id] { return cached }
-            let (messages, _) = resolveMessages(conversation, lookup: { all[$0] }, visited: [conversation.id])
-            resolvedCache[conversation.id] = messages
-            return messages
-        }
-
+        let (all, resolved) = loadAllResolved()
         var metas = all.values.map { conversation in
             ConversationMeta(
                 id: conversation.id,
                 title: conversation.title,
                 updatedAt: conversation.updatedAt,
-                snippet: ConversationMeta.snippet(for: resolved(conversation)),
+                snippet: ConversationMeta.snippet(for: resolved[conversation.id] ?? conversation.messages),
                 isFork: conversation.parentID != nil
             )
         }

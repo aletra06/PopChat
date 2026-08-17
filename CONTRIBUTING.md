@@ -28,7 +28,19 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 .build/debug/PopChat --smoke-find                           # find-in-chat behavior
 ```
 
-`--smoke-persist`, `--smoke-history`, `--smoke-minsize`, `--smoke-pasteable`, `--smoke-providers`, `--smoke-accent`, `--smoke-typewriter`, `--chatgpt-login` and `--smoke-chatgpt` cover the rest. `--check-codex-app-server` checks the installed Codex, ChatGPT login and available model catalog without starting a model turn; `--smoke-codex-refresh-coalescing` verifies overlapping checks share one process. `--shot <settings|general|switcher> <path> [--dark|--light]` renders a view to PNG in-process.
+`--smoke-persist`, `--smoke-history`, `--smoke-minsize`, `--smoke-pasteable`, `--smoke-providers`, `--smoke-accent`, `--smoke-typewriter`, `--chatgpt-login` and `--smoke-chatgpt` cover the rest. `--check-codex-app-server` checks the installed Codex, ChatGPT login and available model catalog without starting a model turn; `--smoke-codex-refresh-coalescing` verifies overlapping checks share one process. `--shot <settings|general|switcher|transcript|thinking|accent> <path> [--dark|--light]` renders a view to PNG in-process (`transcript` forces a solid panel — glass has no backdrop to composite against offscreen — and seeds itself through `ConversationStore.save` so the shot exercises the real restore path).
+
+The check-list harnesses share `CheckLog` (`check` / `finish`) and the GUI ones share `composerTextView(in:)`, `sendKey(...)` and `sendArrow(...)` — add to those rather than re-declaring a local copy.
+
+Four more need neither network nor GUI, plus one that drives the real composer:
+
+```sh
+.build/debug/PopChat --smoke-rerun         # Retry / Edit prompt truncation, fork safety, ↑ history storage
+.build/debug/PopChat --smoke-chat-search   # cross-conversation body search + excerpts
+.build/debug/PopChat --smoke-reasoning     # reasoning wire spellings, waiting-row line, metrics-neutral styling
+.build/debug/PopChat --smoke-update        # version ordering + GitHub release decoding
+.build/debug/PopChat --smoke-recall        # ↑/↓ prompt recall through real arrow-key events (GUI)
+```
 
 Three harnesses drive a fake app-server instead of the real one, so they cost no subscription quota and need no Codex install:
 
@@ -38,12 +50,13 @@ Three harnesses drive a fake app-server instead of the real one, so they cost no
 .build/debug/PopChat --smoke-codex-app-server-backpressure Tools/fake-codex-wedge
 ```
 
-They guard, in order: turn assembly and notification ordering (both agent messages must survive, the first delta must not wait on the `turn/start` response, a replayed `item/completed` must not duplicate its item, and a `willRetry` error must drop the aborted in-flight partial and surface a retry status rather than gluing the re-stream onto it in silence); recovery from a process that goes silent mid-turn; and the rule that a process which stops draining its stdin cannot wedge PopChat — never hold a lock across the blocking write, or Stop and the watchdog both block behind it.
+They guard, in order: turn assembly and notification ordering (both agent messages must survive, the first delta must not wait on the `turn/start` response, a replayed `item/completed` must not duplicate its item, and a `willRetry` error must drop the aborted in-flight partial and surface a retry status rather than gluing the re-stream onto it in silence — plus the same three rules for reasoning: summary parts of one item stay separate thoughts, raw reasoning loses to a summary, and a retry drops the aborted thinking); recovery from a process that goes silent mid-turn; and the rule that a process which stops draining its stdin cannot wedge PopChat — never hold a lock across the blocking write, or Stop and the watchdog both block behind it.
 
 Two rules when running these:
 
 - Each GUI harness builds a real key window, so **run them one at a time**, not back-to-back — otherwise they fight over key status and stray keystrokes land in the wrong field, failing spuriously.
 - The performance harnesses fail on main-thread stalls, so run `--smoke-typing` and `--smoke-scroll` after touching the transcript, the composer or panel sizing.
+- `--smoke-history` and `--smoke-recall` locate real controls by their placeholder text, so renaming one is a harness change too — that is the point, not an annoyance.
 
 ## Performance constraints
 

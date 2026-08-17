@@ -7,6 +7,11 @@ import AppKit
 final class ComposerModel: ObservableObject {
     @Published var pendingAttachments: [Attachment] = []
     @Published var attachNotice: String?
+    /// Text to load into the field from outside the composer (Edit prompt).
+    /// ComposerView consumes it and clears it — it is a one-shot message, not
+    /// a mirror of the draft, which stays private to the composer so keystrokes
+    /// never reach the transcript.
+    @Published var injectedDraft: String?
 
     func handleFiles(_ urls: [URL]) {
         attachNotice = nil
@@ -174,6 +179,13 @@ struct ComposerTextView: NSViewRepresentable {
         // ~30×/s) made Chinese/Japanese/Korean input impossible. The binding is
         // kept in step by ComposingTextView, and resyncs on commit either way.
         if !textView.hasMarkedText(), textView.string != text {
+            // Every external write REPLACES the draft with something the user
+            // continues typing after — a completed slash command, a recalled
+            // prompt, a message pulled back for editing — so the caret has to
+            // end up at the end. Assigning `string` already does that in both
+            // directions (verified against longer AND shorter replacements by
+            // --smoke-recall, which is why those caret checks are there): an
+            // explicit setSelectedRange here would be dead code.
             textView.string = text
             coordinator.remeasure()
         }
@@ -265,9 +277,15 @@ struct ComposerTextView: NSViewRepresentable {
                 if textView.hasMarkedText() { return false } // IME confirm
                 if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { return false } // ⇧↩ newline
                 return parent.onReturn()
+            // Arrow keys drive the slash popup and prompt recall — but only over
+            // committed text. Mid-composition they belong to the input method's
+            // candidate window, and consuming them here would make an IME
+            // unusable in the composer.
             case #selector(NSResponder.moveUp(_:)):
+                if textView.hasMarkedText() { return false }
                 return parent.onMoveUp()
             case #selector(NSResponder.moveDown(_:)):
+                if textView.hasMarkedText() { return false }
                 return parent.onMoveDown()
             case #selector(NSResponder.insertTab(_:)):
                 return parent.onTab()
@@ -302,6 +320,11 @@ struct ComposerView: View {
     @State private var draft = ""
     @State private var completionIndex = 0
     @State private var inputHeight: CGFloat = 21
+    /// ↑ recall. Nil means "not browsing"; otherwise a snapshot of the history
+    /// taken when the walk started — so a send landing mid-walk can't shift the
+    /// list under the user — together with the position in it. One optional
+    /// makes index-in-range structural rather than something to re-check.
+    @State private var recall: (entries: [String], index: Int)?
     @AppStorage("webSearchEnabled") private var webEnabled = true
     @AppStorage("accentColor") private var accentHex = Theme.defaultAccentHex
     @Environment(\.colorScheme) private var scheme
@@ -342,10 +365,21 @@ struct ComposerView: View {
             reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.32, dampingFraction: 0.82),
             value: editorMode
         )
-        .onChange(of: draft) { _, _ in
+        .onChange(of: draft) { _, newValue in
             if completionIndex != 0 { completionIndex = 0 }
+            // Editing a recalled prompt makes it yours again: further ↑ then
+            // starts a fresh walk from the top rather than continuing the old
+            // one and discarding what was just typed.
+            if let recall, recall.entries[recall.index] != newValue { self.recall = nil }
         }
         .onChange(of: editorMode) { _, _ in onFocusRequest() }
+        .onChange(of: model.injectedDraft) { _, injected in
+            guard let injected else { return }
+            draft = injected
+            model.injectedDraft = nil
+            recall = nil
+            onFocusRequest()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .popChatAttachPasteboard)) { _ in
             model.handlePasteboard()
         }
@@ -490,14 +524,18 @@ struct ComposerView: View {
                 return true
             },
             onMoveUp: {
-                guard !completionCandidates.isEmpty else { return false }
-                completionIndex = max(0, completionIndex - 1)
-                return true
+                guard completionCandidates.isEmpty else {
+                    completionIndex = max(0, completionIndex - 1)
+                    return true
+                }
+                return recallOlder()
             },
             onMoveDown: {
-                guard !completionCandidates.isEmpty else { return false }
-                completionIndex = min(completionCandidates.count - 1, completionIndex + 1)
-                return true
+                guard completionCandidates.isEmpty else {
+                    completionIndex = min(completionCandidates.count - 1, completionIndex + 1)
+                    return true
+                }
+                return recallNewer()
             },
             onTab: {
                 guard !completionCandidates.isEmpty else { return false }
@@ -552,6 +590,42 @@ struct ComposerView: View {
                     .help("Send")
             }
         }
+    }
+
+    // MARK: - Prompt recall (↑ / ↓)
+
+    /// ↑ walks back through prompts you have sent, shell-style. It only STARTS
+    /// from an empty composer — ↑ in a draft you are writing has to keep meaning
+    /// "move the caret up", or a multi-line draft becomes uneditable and a
+    /// half-typed one gets eaten. In the ⌘E editor it never applies: that mode
+    /// exists precisely for long, multi-line drafts.
+    private func recallOlder() -> Bool {
+        guard !editorMode else { return false }
+        // Starting a walk needs an empty draft; continuing one does not.
+        let entries = recall?.entries ?? (draft.isEmpty ? PromptHistory.entries : [])
+        let next = recall.map { $0.index + 1 } ?? 0
+        guard next < entries.count else {
+            // Already at the oldest: consume the key rather than letting it move
+            // the caret. Not browsing at all: let ↑ mean what it usually means.
+            return recall != nil
+        }
+        recall = (entries, next)
+        draft = entries[next]
+        return true
+    }
+
+    /// ↓ walks back toward the present, and past the newest entry returns the
+    /// empty composer you started from.
+    private func recallNewer() -> Bool {
+        guard !editorMode, let recall else { return false }
+        if recall.index == 0 {
+            self.recall = nil
+            draft = ""
+        } else {
+            self.recall = (recall.entries, recall.index - 1)
+            draft = recall.entries[recall.index - 1]
+        }
+        return true
     }
 
     // MARK: - Slash-command completion
@@ -707,6 +781,7 @@ struct ComposerView: View {
         guard !isStreaming, canSend else { return }
         onSend(draft, model.pendingAttachments)
         draft = ""
+        recall = nil
         model.clear()
     }
 }

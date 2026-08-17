@@ -31,6 +31,7 @@ struct SettingsView: View {
 
     @ObservedObject var store: ProviderStore
     @ObservedObject var shortcutStore: ShortcutStore
+    @ObservedObject var updates: UpdateChecker
     @State private var tab: Tab
     @State private var searchKeyDraft = ""
     @State private var systemPromptDraft = ChatStore.systemPrompt
@@ -43,6 +44,7 @@ struct SettingsView: View {
     @AppStorage("liquidGlass") private var liquidGlass = true
     @AppStorage("panelTint") private var panelTint = -1.0
     @AppStorage("appearance") private var appearanceRaw = AppearanceChoice.auto.rawValue
+    @AppStorage(UpdateChecker.automaticChecksKey) private var automaticUpdateChecks = true
     @AppStorage(CodexAppServerClient.executablePathKey) private var codexExecutablePath = ""
     @FocusState private var focusedCommandName: UUID?
     @Environment(\.colorScheme) private var scheme
@@ -74,9 +76,13 @@ struct SettingsView: View {
     @State private var keyDraft = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(store: ProviderStore, shortcutStore: ShortcutStore, tab: Tab = .general, editing: UUID? = nil) {
+    init(
+        store: ProviderStore, shortcutStore: ShortcutStore,
+        updates: UpdateChecker, tab: Tab = .general, editing: UUID? = nil
+    ) {
         self.store = store
         self.shortcutStore = shortcutStore
+        self.updates = updates
         _tab = State(initialValue: tab)
         initialEditingID = editing
     }
@@ -154,6 +160,14 @@ struct SettingsView: View {
                 }
             }
             Section {
+                updateRow
+                Toggle("Check for updates automatically", isOn: $automaticUpdateChecks)
+            } footer: {
+                Text("PopChat checks GitHub Releases once a day and tells you when a newer version exists. It never downloads or installs anything — updating is opening the release page and dragging the new build to Applications, same as the first time.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 appearanceRow
                 accentRow
                 Picker("Your message style", selection: $bubbleStyleRaw) {
@@ -178,6 +192,42 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var updateRow: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("PopChat \(UpdateChecker.currentVersion)")
+                switch updates.state {
+                case .idle:
+                    EmptyView()
+                case .checking:
+                    Text("Checking…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                case .upToDate:
+                    Text("Up to date")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                case .available(let release):
+                    Text("Version \(release.version) is available")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.color(accentHex))
+                case .failed(let message):
+                    Text(message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            if let release = updates.availableRelease {
+                Link("What's new…", destination: release.page)
+                    .font(.system(size: 11))
+            }
+            Button("Check Now") { updates.check(userInitiated: true) }
+                .disabled(updates.state == .checking)
         }
     }
 

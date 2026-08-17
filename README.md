@@ -16,6 +16,9 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 - **Instant panel** — a non-activating `NSPanel`, so showing it never steals focus from the app underneath and dismissing it returns focus immediately. Remembers where you last dragged it. ⌘P pins it open.
 - **Any OpenAI-compatible provider** — OpenAI, OpenRouter, or any custom endpoint, plus local models via Ollama or LM Studio (no API key needed). Switch provider and model from a pill in the panel header.
 - **Slash commands** — your own prompt templates with a `{input}` placeholder and an autocomplete popup when the draft starts with `/`.
+- **Retry the last answer** — with a different model if you like: switch the pill, press Retry. *Edit prompt* puts your last message back in the composer instead, and **↑** in an empty composer walks back through prompts you've sent.
+- **See the thinking** — while a reasoning model works, its thoughts scroll in a small window you can expand; once the answer lands they fold into a collapsed *Reasoning* section above it.
+- **Search your chats** — ⌘Y searches what was actually said, not just chat titles, and shows the matching line.
 - **Large editor** (⌘E) — the input capsule morphs into a full draft editor; ⌘↩ sends.
 - **Liquid-glass look** on macOS 26 (translucent panel with an adjustable tint), a solid fallback below that, Light/Dark/Auto appearance, four accent presets plus a custom color picker, and full support for Reduce Motion / Reduce Transparency.
 
@@ -51,6 +54,8 @@ Open Settings from the menu bar icon or **⌘,** inside the panel.
 - **Commands** — edit the system prompt and define slash commands.
 - **Hotkey** — record whatever global shortcut you want (⌥Space by default).
 
+PopChat checks GitHub Releases once a day and tells you in Settings › General (and in the menu bar icon's menu) when a newer version exists. It never downloads or installs anything — you update by opening the release page and dragging the new build to Applications, the same way you installed it. Turn the check off in Settings › General.
+
 Local models need no key at all: run Ollama and pick its preset, or point a custom endpoint at LM Studio's server.
 
 ### Where things are stored
@@ -76,6 +81,7 @@ Secrets are a plain JSON file, not the Keychain: with ad-hoc signing every rebui
 | ⌘P | pin the panel open |
 | ⌘, | Settings |
 | ↩ / ⇧↩ | send / newline |
+| ↑ / ↓ | recall prompts you've sent (empty composer only) |
 
 ## Development
 
@@ -87,7 +93,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke              # live streaming r
 .build/debug/PopChat --smoke-find                           # find-in-chat behavior
 ```
 
-A dozen more cover attachments, persistence, providers, the typewriter reveal and the Codex app-server transport (against fake fixtures, so they cost no subscription quota). See [CONTRIBUTING.md](CONTRIBUTING.md) for the full list, the rules for running them, and the performance constraints to respect when changing the transcript or composer.
+A dozen more cover attachments, persistence, providers, prompt recall, cross-chat search, reasoning, the typewriter reveal and the Codex app-server transport (against fake fixtures, so they cost no subscription quota). See [CONTRIBUTING.md](CONTRIBUTING.md) for the full list, the rules for running them, and the performance constraints to respect when changing the transcript or composer.
 
 ## License
 
