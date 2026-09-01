@@ -7,7 +7,7 @@ import Foundation
 /// no other channel that could ever tell them otherwise. Deliberately NOT an
 /// updater — it never downloads, replaces, or relaunches anything; it reports a
 /// version and links the release page, and the user decides. That keeps the
-/// ad-hoc/Developer-ID signing story and the "personal use, shared as-is" scope
+/// Developer-ID signing story and the "personal use, shared as-is" scope
 /// intact, and it needs no privileged helper.
 @MainActor
 final class UpdateChecker: ObservableObject {

@@ -11,9 +11,14 @@ cd "$(dirname "$0")"
 
 CONFIG="${1:-release}"
 SIGN_ID="${POPCHAT_SIGN_IDENTITY:--}"
-swift build -c "$CONFIG"
+# SwiftPM's generated Bundle.module accessors embed the build-products directory's
+# ABSOLUTE PATH as a string literal in the binary (a dev-time fallback lookup), so a
+# build made here ships "/Users/<name>/..." inside the executable. release.sh points
+# POPCHAT_SCRATCH at a neutral path so the published DMG carries no home directory.
+SCRATCH="${POPCHAT_SCRATCH:-.build}"
+swift build -c "$CONFIG" --scratch-path "$SCRATCH"
 
-BIN=".build/$CONFIG/PopChat"
+BIN="$SCRATCH/$CONFIG/PopChat"
 APP="dist/PopChat.app"
 
 rm -rf "$APP"
@@ -27,7 +32,7 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # CFBundleIco
 # SwiftMath traps the first time a message contains LaTeX.
 # -L is load-bearing: .build/<config> is a symlink to .build/<triple>/<config>, and
 # plain find will not descend into it, so this silently copied nothing.
-find -L ".build/$CONFIG" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
+find -L "$SCRATCH/$CONFIG" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
 
 # Counted, not "is Resources empty" — the icon lives there too and would mask a miss.
 if [ "$(find "$APP/Contents/Resources" -maxdepth 1 -name "*.bundle" | wc -l)" -eq 0 ]; then

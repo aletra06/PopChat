@@ -1,8 +1,10 @@
 import Foundation
 
-/// Plain-file secret storage. Deliberately NOT the Apple Keychain: with an ad-hoc
-/// signed app every rebuild changes the binary's identity, so the Keychain re-prompts
-/// for the login-keychain password — unacceptable UX. Keys are stored unencrypted but
+/// Plain-file secret storage. Deliberately NOT the Apple Keychain: dev builds are
+/// ad-hoc signed, so every rebuild changes the binary's identity and the Keychain
+/// re-prompts for the login-keychain password — unacceptable UX (releases carry a
+/// stable Developer ID now, but the dev loop is where the prompts bit, and this
+/// file works for both). Keys are stored unencrypted but
 /// user-only readable (0600) at ~/Library/Application Support/PopChat/secrets.json —
 /// the same trust model as the .env files these keys come from.
 enum SecretStore {

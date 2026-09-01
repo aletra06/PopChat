@@ -3,9 +3,10 @@
 # to a GitHub Release. Unlike an ad-hoc build, this one opens on someone else's Mac
 # without a Gatekeeper detour.
 #
-# One-time setup (interactive, stores an app-specific password in the login keychain):
+# One-time setup (interactive, stores an app-specific password in the login keychain
+# under the profile name "developer" — already done on this machine):
 #
-#   xcrun notarytool store-credentials popchat \
+#   xcrun notarytool store-credentials developer \
 #       --apple-id <your-apple-id> --team-id 322TD85UJS --password <app-specific-password>
 #
 # App-specific passwords come from appleid.apple.com → Sign-In and Security.
@@ -13,14 +14,17 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 IDENTITY="${POPCHAT_SIGN_IDENTITY:-Developer ID Application: Le Chen (322TD85UJS)}"
-PROFILE="${POPCHAT_NOTARY_PROFILE:-popchat}"
+PROFILE="${POPCHAT_NOTARY_PROFILE:-developer}"
 
 APP="dist/PopChat.app"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
 DMG="dist/PopChat-$VERSION.dmg"
 
 echo "==> Building and signing $VERSION"
-POPCHAT_SIGN_IDENTITY="$IDENTITY" ./build.sh release
+# Neutral scratch path: Bundle.module accessors embed the products dir into the
+# binary, and the default .build/ would put this checkout's /Users/<name> path in
+# every shipped DMG. /tmp survives across runs (incremental builds) until reboot.
+POPCHAT_SIGN_IDENTITY="$IDENTITY" POPCHAT_SCRATCH="${POPCHAT_SCRATCH:-/tmp/popchat-scratch}" ./build.sh release
 
 WORK=$(mktemp -d)          # scratch: the upload zip, never packaged
 STAGE=$(mktemp -d)         # exactly what lands in the disk image

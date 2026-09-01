@@ -24,7 +24,7 @@ Press a global hotkey (default **⌥Space**) and a floating chat panel appears w
 
 ## Install
 
-Download the latest `PopChat-x.y.z.dmg` from [Releases](https://github.com/lec77/PopChat/releases), open it, and drag PopChat to Applications.
+Download the latest `PopChat-x.y.z.dmg` from [Releases](https://github.com/lec77/PopChat/releases), open it, and drag PopChat to Applications. Releases are Developer-ID signed and notarized, so macOS opens them without any Gatekeeper warning.
 
 Requires **macOS 14 or later**. The liquid-glass backdrop needs macOS 26; older systems get a solid panel.
 
@@ -39,7 +39,7 @@ cd PopChat
 open dist/PopChat.app
 ```
 
-`./build.sh debug` builds the debug configuration. The script wraps the SwiftPM binary in an app bundle and **ad-hoc signs** it, which is fine for a build you made yourself. `./release.sh` is the other path — it signs with a Developer ID, builds the disk image, and notarizes it; that one only works with my certificate.
+`./build.sh debug` builds the debug configuration. The script wraps the SwiftPM binary in an app bundle and ad-hoc signs it by default — fine for a build you made yourself, and you can point `POPCHAT_SIGN_IDENTITY` at your own certificate instead. `./release.sh` is the release path — it signs with a Developer ID, notarizes and staples both the app and the disk image; that one only works with my certificate.
 
 There is no Xcode project — it's plain SwiftPM (`Package.swift`) plus `build.sh`.
 
@@ -66,7 +66,7 @@ Local models need no key at all: run Ollama and pick its preset, or point a cust
 | API keys & OAuth tokens | `~/Library/Application Support/PopChat/secrets.json` (chmod 600) |
 | Conversations | `~/Library/Application Support/PopChat/conversations/*.json` |
 
-Secrets are a plain JSON file, not the Keychain: with ad-hoc signing every rebuild changes the binary identity, and macOS would then demand the login-keychain password on every launch. The file matches the trust model of the `.env` the keys usually come from.
+Secrets are a plain JSON file, not the Keychain: builds from source are ad-hoc signed, so every rebuild changes the binary identity, and macOS would then demand the login-keychain password on every launch. The file matches the trust model of the `.env` the keys usually come from.
 
 ## Keyboard shortcuts
 
