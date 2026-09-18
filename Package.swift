@@ -15,8 +15,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "PopChat",
-            dependencies: ["KeyboardShortcuts", "CoreXLSX", "Splash", "SwiftMath"],
+            dependencies: ["KeyboardShortcuts", "CoreXLSX", "Splash", "SwiftMath", "PopChatBundleShim"],
             path: "Sources/PopChat"
         ),
+        // Objective-C: the Bundle.module redirect for the assembled .app (see the .m).
+        .target(name: "PopChatBundleShim", path: "Sources/PopChatBundleShim"),
     ]
 )

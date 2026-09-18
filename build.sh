@@ -16,7 +16,28 @@ SIGN_ID="${POPCHAT_SIGN_IDENTITY:--}"
 # build made here ships "/Users/<name>/..." inside the executable. release.sh points
 # POPCHAT_SCRATCH at a neutral path so the published DMG carries no home directory.
 SCRATCH="${POPCHAT_SCRATCH:-.build}"
-swift build -c "$CONFIG" --scratch-path "$SCRATCH"
+
+# SDK: Command Line Tools 27.0 (beta, September 2026) made its default SDK's SwiftUI
+# declare @State and friends as MACROS whose plugin (libSwiftUIMacros) ships only
+# inside Xcode, so under the CLT every SwiftUI file fails with "plugin for module
+# 'SwiftUIMacros' not found". Until a CLT carries the plugin, build against the
+# newest installed SDK that predates it. POPCHAT_SDK overrides; empty = toolchain default.
+SDK="${POPCHAT_SDK-}"
+if [ -z "${POPCHAT_SDK+x}" ]; then
+    TOOLCHAIN_PLUGINS="$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins"
+    SDK_DIR="$(dirname "$(xcrun --show-sdk-path)")"
+    if [ ! -e "$TOOLCHAIN_PLUGINS/libSwiftUIMacros.dylib" ] \
+        && [ "$(xcrun --show-sdk-version | cut -d. -f1)" -ge 27 ] \
+        && [ -d "$SDK_DIR/MacOSX26.sdk" ]; then
+        SDK="$SDK_DIR/MacOSX26.sdk"
+        echo "note: building against $(basename "$(readlink "$SDK" || echo "$SDK")") — the toolchain's default SDK needs Xcode's SwiftUI macro plugin"
+    fi
+fi
+
+# --build-system native, explicitly: swift-build's newer default backend lays products
+# out differently (.build/out/Products/<Config>) and generates a different Bundle.module
+# accessor; the paths below and Sources/PopChatBundleShim are written against native.
+swift build -c "$CONFIG" --scratch-path "$SCRATCH" --build-system native ${SDK:+--sdk "$SDK"}
 
 BIN="$SCRATCH/$CONFIG/PopChat"
 APP="dist/PopChat.app"
@@ -51,4 +72,9 @@ else
     codesign --verify --strict --deep --verbose=2 "$APP"
     echo "Built $APP (signed: $SIGN_ID)"
 fi
+# From INSIDE the assembled app, because that is the only place the check means
+# anything: the dependencies' Bundle.module accessors never look in Contents/Resources
+# (see Sources/PopChatBundleShim), and a copy that ran fine from .build/ shipped a
+# DMG that crashed on the first hotkey recorder or LaTeX message everywhere else.
+"$APP/Contents/MacOS/PopChat" --smoke-bundles
 echo "Run with: open $APP"

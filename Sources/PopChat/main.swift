@@ -1,5 +1,12 @@
 import AppKit
 import SwiftUI
+import PopChatBundleShim
+import KeyboardShortcuts
+import SwiftMath
+
+// First, before any dependency can touch its resources: inside the .app, the SPM
+// dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
+PopChatInstallResourceBundleRedirect()
 
 // Headless streaming checks (no UI):
 //   POPCHAT_API_KEY=… .build/debug/PopChat --smoke          plain streaming
@@ -788,6 +795,37 @@ if CommandLine.arguments.contains("--smoke-update") {
     log.check("the running version parses",
           !UpdateChecker.isNewer(UpdateChecker.currentVersion, than: UpdateChecker.currentVersion))
 
+    log.finish()
+}
+
+// Resource bundles: the dependencies' Bundle.module must resolve INSIDE the
+// assembled .app (no network). Only meaningful when run from dist/PopChat.app —
+// build.sh runs it there after assembly. "Didn't trap" alone proves nothing on
+// this machine, where the accessor's compile-time fallback directory usually
+// exists; the redirect count is what shows the lookups went through
+// Contents/Resources, which is the only place a stranger's Mac has them.
+if CommandLine.arguments.contains("--smoke-bundles") {
+    var log = CheckLog()
+    let root = Bundle.main.bundleURL
+    log.check("runs from an assembled .app", root.pathExtension == "app",
+              "Bundle.main is \(root.path) — run dist/PopChat.app/Contents/MacOS/PopChat --smoke-bundles")
+    _ = NSApplication.shared
+    // The two lookups that crashed 0.1.2: the hotkey recorder (localized strings)
+    // and a LaTeX font.
+    let recorder = KeyboardShortcuts.RecorderCocoa(for: .togglePopChat)
+    log.check("the hotkey recorder constructs", recorder.shortcutName == .togglePopChat)
+    log.check("a math font loads", MTFontManager.manager.latinModernFont(withSize: 12) != nil)
+    let redirected = PopChatResourceBundleRedirectCount()
+    log.check("both lookups were redirected into Contents/Resources", redirected >= 2,
+              "redirected=\(redirected)")
+    // And the bundles the dependencies now hold ARE the in-app copies — not the
+    // compile-time fallback, which on this machine usually still exists.
+    let loaded = Set(Bundle.allBundles.map { $0.bundleURL.standardizedFileURL.path })
+    for name in ["KeyboardShortcuts_KeyboardShortcuts", "SwiftMath_SwiftMath"] {
+        let expected = root.appendingPathComponent("Contents/Resources/\(name).bundle").standardizedFileURL.path
+        log.check("\(name) resolved to the in-app copy", loaded.contains(expected),
+                  "loaded=\(loaded.filter { $0.hasSuffix(".bundle") }.sorted())")
+    }
     log.finish()
 }
 
