@@ -85,7 +85,7 @@ Secrets are a plain JSON file, not the Keychain: builds from source are ad-hoc s
 
 ## Development
 
-`swift build` produces `.build/debug/PopChat`, which doubles as a headless test harness — there is no XCTest suite, the `--smoke-*` flags are the test suite:
+`./build.sh debug` produces `.build/debug/PopChat`, which doubles as a headless test harness — there is no XCTest suite, the `--smoke-*` flags are the test suite:
 
 ```sh
 POPCHAT_API_KEY=… .build/debug/PopChat --smoke              # live streaming round-trip
@@ -101,6 +101,6 @@ MIT — see [LICENSE](LICENSE).
 
 ## Status
 
-Version 0.1.2 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
+Version 0.1.3 — built for personal use and shared as-is. Out of scope by design: model-controlled code execution, arbitrary tool plugins, voice, multi-window.
 
 The direct ChatGPT-subscription path is unofficial and potentially risky; it is retained for existing users but may break or conflict with account/usage terms. The preferred alternative delegates to the user's own Codex installation through the experimental `codex app-server` protocol. That path requires the user to install, authenticate, and maintain Codex, and may need compatibility updates as the protocol evolves.

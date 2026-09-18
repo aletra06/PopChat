@@ -17,7 +17,7 @@ Tools/                   fake app-server fixtures used by the smoke harnesses
 
 ## Test harnesses
 
-`swift build` produces `.build/debug/PopChat`, which doubles as a headless test harness — there is no XCTest suite; the flags below are the test suite.
+`./build.sh debug` produces `.build/debug/PopChat`, which doubles as a headless test harness — there is no XCTest suite; the flags below are the test suite. (Go through the script rather than a bare `swift build`: it pins the build backend and, on Command Line Tools whose default SDK needs Xcode's SwiftUI macro plugin, the SDK.)
 
 ```sh
 POPCHAT_API_KEY=… .build/debug/PopChat --smoke              # live streaming round-trip
