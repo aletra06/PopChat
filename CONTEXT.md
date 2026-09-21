@@ -12,7 +12,7 @@ Compact composer controls share a center alignment guide with the last visible t
 
 Window placement uses an explicit default, initially migrated from the old remembered position. The anchor stores the display ID, horizontal center relative to the display, and distance below its usable top edge. Only the first show after app startup restores it. Hiding, reopening, and creating new chats preserve the current session position; dragging alone never overwrites the default. The underlined action below the composer saves a new default. During header drags, noninteractive guide windows show the default outline and a vertical display centerline when snapped. Default snapping enters within 18 pt and releases past 30 pt; centerline snapping uses 12/22 pt. Pointer movement is measured from the original unsnapped frame so either target can be left smoothly. Missing displays fall back to an available screen without overwriting the saved anchor. Display changes during a session move the window only if it is no longer reachable.
 
-Sending a prompt dismisses the default-location action for the current position. Hiding and reopening keep it dismissed; dragging again makes it available at a new position.
+Sending a prompt or hiding the panel dismisses the default-location action for the current position. Reopening keeps it dismissed; only dragging again makes it available at a new position.
 
 Math uses the bundled SwiftMath renderer. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported inline LaTeX stays visible as source text.
 

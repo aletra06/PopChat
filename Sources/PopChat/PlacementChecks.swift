@@ -61,7 +61,10 @@ func runPlacementChecks(preview: Bool = false) async -> Never {
     controller.show()
     try? await Task.sleep(for: .milliseconds(250))
     log.check("hide and reopen preserve the temporary location", window.frame.origin == movedFrame.origin)
-    log.check("reopening away from default retains the save action", controller.state.awayFromDefaultLocation)
+    log.check("hide and reopen dismiss the save action", controller.state.defaultLocationPromptDismissed)
+    placement.prepareDrag(at: pointer)
+    placement.endDrag()
+    log.check("clicking the header does not reshow the action", controller.state.defaultLocationPromptDismissed)
 
     placement.prepareDrag(at: pointer)
     placement.drag(to: NSPoint(x: pointer.x - 102, y: pointer.y + 54))
@@ -85,6 +88,7 @@ func runPlacementChecks(preview: Bool = false) async -> Never {
     placement.drag(to: NSPoint(x: pointer.x + 50, y: pointer.y - 90))
     log.check("content growth during drag preserves the grabbed top edge", window.frame.maxY == draggedTop)
     placement.endDrag()
+    log.check("moving again restores the save action", controller.state.awayFromDefaultLocation && !controller.state.defaultLocationPromptDismissed)
     placement.saveDefault()
     log.check("explicit save replaces default and hides prompt", defaults.data(forKey: PanelPlacement.defaultsKey) != saved && !controller.state.awayFromDefaultLocation)
     let newDefault = window.frame
@@ -151,7 +155,8 @@ func runPlacementChecks(preview: Bool = false) async -> Never {
     try? await Task.sleep(for: .milliseconds(200))
     controller.show()
     try? await Task.sleep(for: .milliseconds(250))
-    log.check("empty chat also keeps its location when reopened", window.frame == emptyFrame)
+    log.check("empty chat keeps its top edge and center when the link disappears",
+              abs(window.frame.midX - emptyFrame.midX) < 1 && abs(window.frame.maxY - emptyFrame.maxY) < 1)
 
     controller.hide()
     try? await Task.sleep(for: .milliseconds(200))

@@ -209,6 +209,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     func hide() {
         guard panel.isVisible, !isHiding else { return }
         placement.endDrag()
+        state.defaultLocationPromptDismissed = true
         isHiding = true
         if !reduceMotion, let layer = panel.contentView?.layer {
             let shrink = Self.transformAnimation(
