@@ -6,6 +6,8 @@ This fork adds readable chat text for high-resolution Mac displays. The upstream
 
 The setting covers messages, reasoning, code, tables, math and the composer. Toolbar controls keep their existing sizes. `FloatingPanel` handles the shortcuts only inside the chat window, using characters to support different keyboard layouts.
 
+The composer opts out of macOS Writing Tools with `writingToolsBehavior = .none` on macOS 15 and later. This applies to both compact and expanded input without changing system-wide Siri settings.
+
 Math uses the bundled SwiftMath renderer. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported inline LaTeX stays visible as source text.
 
 Code highlighting uses HighlighterSwift with bundled highlight.js grammars and Atom One light/dark themes. Fenced blocks use their language tag. Copyable cards accept `<pasteable title="Label" language="python">`; older cards recognize clear Python, Swift, JavaScript, shell and JSON structures. Unmarked prose and `language="text"` cards stay plain. Highlighting preserves source characters and the Copy action. Code cards scroll horizontally to preserve indentation. Render caches include language, appearance and text size; blocks over 64 KiB fall back to monospaced text to bound parsing work.

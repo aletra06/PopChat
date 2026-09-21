@@ -148,6 +148,10 @@ struct ComposerTextView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        // Keep macOS Writing Tools out of the chat prompt, including the expanded editor.
+        if #available(macOS 15.0, *) {
+            textView.writingToolsBehavior = .none
+        }
         textView.textContainerInset = NSSize(width: 0, height: 2)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
