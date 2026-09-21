@@ -8,6 +8,13 @@ import SwiftMath
 // dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
 PopChatInstallResourceBundleRedirect()
 
+if CommandLine.arguments.contains("--smoke-font-size") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    Task { @MainActor in await runFontSizeChecks() }
+    app.run()
+}
+
 // Headless streaming checks (no UI):
 //   POPCHAT_API_KEY=… .build/debug/PopChat --smoke          plain streaming
 //   POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search   agentic loop w/ DuckDuckGo

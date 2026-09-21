@@ -173,8 +173,8 @@ enum MarkdownRenderer {
 
     /// A table cell's rendered text (inline markdown only). Lives here so search
     /// and rendering measure the same string.
-    static func tableCell(_ text: String, bold: Bool = false) -> NSAttributedString {
-        let font = bold ? NSFont.boldSystemFont(ofSize: 12) : NSFont.systemFont(ofSize: 12)
+    static func tableCell(_ text: String, bold: Bool = false, fontSize: CGFloat = 12) -> NSAttributedString {
+        let font = bold ? NSFont.boldSystemFont(ofSize: fontSize) : NSFont.systemFont(ofSize: fontSize)
         guard let parsed = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -211,13 +211,13 @@ enum MarkdownRenderer {
         NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua ? "l" : "d"
     }
 
-    static func attributedProse(_ markdown: String, caret: NSColor? = nil) -> NSAttributedString {
-        let base = cached(proseCache, markdown) { buildProse(markdown) }
+    static func attributedProse(_ markdown: String, caret: NSColor? = nil, fontSize: CGFloat = NSFont.systemFontSize) -> NSAttributedString {
+        let base = cached(proseCache, markdown, fontSize: fontSize) { buildProse(markdown, fontSize: fontSize) }
         guard let caret else { return base }
         let withCaret = NSMutableAttributedString(attributedString: base)
         withCaret.append(NSAttributedString(string: "▍", attributes: [
             .foregroundColor: caret,
-            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .font: NSFont.systemFont(ofSize: fontSize),
         ]))
         return withCaret
     }
@@ -244,9 +244,9 @@ enum MarkdownRenderer {
     /// and the tail of the thinking is silently clipped. Subordination comes
     /// from the secondary color, the indent rule, and being collapsed by
     /// default; none of those touch metrics.
-    static func attributedReasoning(_ markdown: String) -> NSAttributedString {
-        cached(reasoningCache, markdown) {
-            let result = NSMutableAttributedString(attributedString: buildProse(markdown))
+    static func attributedReasoning(_ markdown: String, fontSize: CGFloat = NSFont.systemFontSize) -> NSAttributedString {
+        cached(reasoningCache, markdown, fontSize: fontSize) {
+            let result = NSMutableAttributedString(attributedString: buildProse(markdown, fontSize: fontSize))
             result.addAttribute(
                 .foregroundColor, value: NSColor.secondaryLabelColor,
                 range: NSRange(location: 0, length: result.length)
@@ -262,16 +262,17 @@ enum MarkdownRenderer {
     private static func cached(
         _ cache: NSCache<NSString, NSAttributedString>,
         _ markdown: String,
+        fontSize: CGFloat,
         build: () -> NSAttributedString
     ) -> NSAttributedString {
-        let key = "\(appearanceKey)|\(markdown)" as NSString
+        let key = "\(appearanceKey)|\(fontSize)|\(markdown)" as NSString
         if let hit = cache.object(forKey: key) { return hit }
         let built = build()
         cache.setObject(built, forKey: key)
         return built
     }
 
-    private static func buildProse(_ markdown: String) -> NSAttributedString {
+    private static func buildProse(_ markdown: String, fontSize: CGFloat) -> NSAttributedString {
         // Inline math is swapped for placeholder tokens before markdown parsing
         // (so the parser can't mangle it), then replaced with rendered attachments.
         var mathParts: [String] = []
@@ -280,14 +281,15 @@ enum MarkdownRenderer {
             (source, mathParts) = extractInlineMath(markdown)
         }
 
-        let baseSize = NSFont.systemFontSize
+        let baseSize = fontSize
+        let scale = fontSize / NSFont.systemFontSize
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,
             interpretedSyntax: .full,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
         guard let parsed = try? AttributedString(markdown: source, options: options) else {
-            return plain(markdown)
+            return plain(markdown, size: fontSize)
         }
 
         let result = NSMutableAttributedString()
@@ -337,7 +339,7 @@ enum MarkdownRenderer {
             let inline = run.inlinePresentationIntent ?? []
             let isInlineCode = inline.contains(.code)
             if isCodeBlock || isInlineCode {
-                font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
             }
             if inline.contains(.stronglyEmphasized) {
                 font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
@@ -347,16 +349,16 @@ enum MarkdownRenderer {
             }
 
             let paragraph = NSMutableParagraphStyle()
-            paragraph.paragraphSpacing = headerLevel > 0 ? 8 : 6
-            paragraph.lineSpacing = 4
+            paragraph.paragraphSpacing = (headerLevel > 0 ? 8 : 6) * scale
+            paragraph.lineSpacing = 4 * scale
             if listDepth > 0 {
-                let indent = CGFloat(listDepth - 1) * 16
+                let indent = CGFloat(listDepth - 1) * 16 * scale
                 paragraph.firstLineHeadIndent = indent
-                paragraph.headIndent = indent + 16
+                paragraph.headIndent = indent + 16 * scale
             }
             if isQuote {
-                paragraph.firstLineHeadIndent += 10
-                paragraph.headIndent += 10
+                paragraph.firstLineHeadIndent += 10 * scale
+                paragraph.headIndent += 10 * scale
             }
 
             var attributes: [NSAttributedString.Key: Any] = [
@@ -394,13 +396,13 @@ enum MarkdownRenderer {
             result.append(NSAttributedString(string: text, attributes: attributes))
         }
 
-        substituteInlineMath(in: result, parts: mathParts)
-        return result.length > 0 ? result : plain(markdown)
+        substituteInlineMath(in: result, parts: mathParts, fontSize: fontSize)
+        return result.length > 0 ? result : plain(markdown, size: fontSize)
     }
 
     static func plain(_ text: String, monospaced: Bool = false, color: NSColor = .labelColor, size: CGFloat? = nil) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = monospaced ? 4 : 3
+        paragraph.lineSpacing = (monospaced ? 4 : 3) * (size ?? NSFont.systemFontSize) / NSFont.systemFontSize
         let font = monospaced
             ? NSFont.monospacedSystemFont(ofSize: size ?? 11.5, weight: .regular)
             : NSFont.systemFont(ofSize: size ?? NSFont.systemFontSize)
@@ -453,15 +455,15 @@ enum MarkdownRenderer {
         return cache
     }()
 
-    static func highlightedCode(_ code: String, dark: Bool = true) -> NSAttributedString {
-        let key = "\(dark ? "d" : "l")|\(code)" as NSString
+    static func highlightedCode(_ code: String, dark: Bool = true, fontSize: CGFloat = 11.5) -> NSAttributedString {
+        let key = "\(dark ? "d" : "l")|\(fontSize)|\(code)" as NSString
         if let cached = codeCache.object(forKey: key) { return cached }
         let highlighter = dark ? darkHighlighter : lightHighlighter
         let highlighted = NSMutableAttributedString(attributedString: highlighter.highlight(code))
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 4
+        paragraph.lineSpacing = 4 * fontSize / NSFont.systemFontSize
         highlighted.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular),
+            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular),
             .paragraphStyle: paragraph,
         ], range: NSRange(location: 0, length: highlighted.length))
         codeCache.setObject(highlighted, forKey: key)
@@ -522,13 +524,13 @@ enum MarkdownRenderer {
         return (ordered, parts)
     }
 
-    private static func substituteInlineMath(in result: NSMutableAttributedString, parts: [String]) {
+    private static func substituteInlineMath(in result: NSMutableAttributedString, parts: [String], fontSize: CGFloat) {
         for (index, latex) in parts.enumerated() {
             let token = "⟦MATH\(index)⟧"
             let range = (result.string as NSString).range(of: token)
             guard range.location != NSNotFound else { continue }
-            let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-            if let image = mathImage(latex, fontSize: NSFont.systemFontSize, display: false) {
+            let font = NSFont.systemFont(ofSize: fontSize)
+            if let image = mathImage(latex, fontSize: fontSize, display: false) {
                 let attachment = NSTextAttachment()
                 attachment.image = image
                 attachment.bounds = CGRect(
@@ -701,6 +703,7 @@ struct SelectableText: NSViewRepresentable {
 /// styled blocks for code, quotes, tables and display math. While streaming, a
 /// blinking caret rides the end of the text.
 struct AssistantMessageView: View {
+    @Environment(\.chatTextSize) private var fontSize
     let text: String
     var showCaret = false
     var find: MessageFind?
@@ -726,7 +729,7 @@ struct AssistantMessageView: View {
                     SelectableText(
                         attributed: MarkdownRenderer.attributedProse(
                             prose,
-                            caret: caret ? Theme.nsColor(accentHex) : nil
+                            caret: caret ? Theme.nsColor(accentHex) : nil, fontSize: fontSize
                         ),
                         find: segmentFind,
                         // The caret glyph rides the HEAD of the fade rather than
@@ -786,13 +789,14 @@ struct AssistantMessageView: View {
 /// Blink is a repeat-forever opacity animation — rendered by Core Animation, so
 /// it never re-evaluates SwiftUI bodies or triggers layout.
 private struct BlinkingCaret: View {
+    @Environment(\.chatTextSize) private var fontSize
     let color: SwiftUI.Color
     @State private var dimmed = false
 
     var body: some View {
         Rectangle()
             .fill(color)
-            .frame(width: 1.5, height: 14)
+            .frame(width: 1.5, height: fontSize)
             .opacity(dimmed ? 0.1 : 1)
             .onAppear {
                 withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
@@ -803,6 +807,7 @@ private struct BlinkingCaret: View {
 }
 
 struct CodeBlockView: View {
+    @Environment(\.chatTextSize) private var fontSize
     let language: String?
     let content: String
     var find: TextFind?
@@ -841,7 +846,7 @@ struct CodeBlockView: View {
             .background(Theme.recessedHeader(dark: dark))
             ScrollView(.horizontal, showsIndicators: false) {
                 SelectableText(
-                    attributed: MarkdownRenderer.highlightedCode(content, dark: dark),
+                    attributed: MarkdownRenderer.highlightedCode(content, dark: dark, fontSize: fontSize),
                     wraps: false, find: find, reveal: reveal
                 )
                 .padding(10)
@@ -855,6 +860,7 @@ struct CodeBlockView: View {
 }
 
 struct QuoteBlockView: View {
+    @Environment(\.chatTextSize) private var fontSize
     let text: String
     var find: TextFind?
 
@@ -863,13 +869,14 @@ struct QuoteBlockView: View {
             RoundedRectangle(cornerRadius: 1)
                 .fill(Color.primary.opacity(0.3))
                 .frame(width: 2)
-            SelectableText(attributed: MarkdownRenderer.attributedProse(text), find: find)
+            SelectableText(attributed: MarkdownRenderer.attributedProse(text, fontSize: fontSize), find: find)
                 .opacity(0.65)
         }
     }
 }
 
 struct TableBlockView: View {
+    @Environment(\.chatTextSize) private var fontSize
     let header: [String]
     let rows: [[String]]
     /// One entry per cell, in `MarkdownRenderer.searchableStrings` order.
@@ -904,7 +911,7 @@ struct TableBlockView: View {
     }
 
     private func cellView(_ text: String, header: Bool, find: TextFind?) -> some View {
-        SelectableText(attributed: MarkdownRenderer.tableCell(text, bold: header), find: find)
+        SelectableText(attributed: MarkdownRenderer.tableCell(text, bold: header, fontSize: fontSize), find: find)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
     }
@@ -927,6 +934,7 @@ struct TableBlockView: View {
 /// pasteables lift — light fill + hairline, clipboard glyph leading: "take
 /// this". Accent marks only the action: the Copy capsule.
 struct PasteableBlockView: View {
+    @Environment(\.chatTextSize) private var fontSize
     let title: String?
     let content: String
     var find: TextFind?
@@ -972,7 +980,7 @@ struct PasteableBlockView: View {
             .padding(.vertical, 6)
             Divider()
                 .overlay(Theme.liftedDivider(dark: dark))
-            SelectableText(attributed: MarkdownRenderer.plain(content, size: 12.5), find: find)
+            SelectableText(attributed: MarkdownRenderer.plain(content, size: fontSize), find: find)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
         }
@@ -987,16 +995,17 @@ struct PasteableBlockView: View {
 }
 
 struct MathBlockView: View {
+    @Environment(\.chatTextSize) private var fontSize
     let latex: String
 
     var body: some View {
-        if let image = MarkdownRenderer.mathImage(latex, fontSize: 17, display: true) {
+        if let image = MarkdownRenderer.mathImage(latex, fontSize: fontSize * 1.25, display: true) {
             Image(nsImage: image)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 8)
         } else {
             // Explicit fallback: show the raw TeX rather than silently dropping it.
-            SelectableText(attributed: MarkdownRenderer.plain("$$\(latex)$$", monospaced: true))
+            SelectableText(attributed: MarkdownRenderer.plain("$$\(latex)$$", monospaced: true, size: fontSize))
         }
     }
 }

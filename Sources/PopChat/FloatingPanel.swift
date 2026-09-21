@@ -51,6 +51,7 @@ final class FloatingPanel: NSPanel {
     /// Must run here, before the Edit menu's Paste equivalent fires — otherwise
     /// `paste:` would insert file paths as text into the field editor.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if ChatTextSize.handle(event) { return true }
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
            event.charactersIgnoringModifiers?.lowercased() == "v",
            let onAttachablePaste,

@@ -117,6 +117,7 @@ final class ComposingTextView: NSTextView {
 /// boundary — the height callback fires only when the measured height actually
 /// changes, never per keystroke. Native undo, IME and editing shortcuts.
 struct ComposerTextView: NSViewRepresentable {
+    @Environment(\.chatTextSize) private var fontSize
     @Binding var text: String
     /// Editor mode: fill whatever height the layout offers, always scrollable.
     var fillsHeight = false
@@ -137,7 +138,7 @@ struct ComposerTextView: NSViewRepresentable {
         textView.onCompositionChange = { [weak coordinator = context.coordinator] in
             coordinator?.syncFromTextView()
         }
-        textView.font = .systemFont(ofSize: 13)
+        textView.font = .systemFont(ofSize: fontSize)
         textView.textColor = .labelColor
         textView.drawsBackground = false
         textView.isRichText = false
@@ -173,6 +174,11 @@ struct ComposerTextView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
+        if textView.font?.pointSize != fontSize {
+            // Formatting only: preserve the draft, selection, undo and marked text.
+            textView.font = .systemFont(ofSize: fontSize)
+            coordinator.remeasure()
+        }
         // Never write to the text view mid-composition: assigning `string` clears
         // the input context's marked text and aborts the IME session, so any
         // re-render arriving while the user was composing (streaming tokens do it
@@ -261,7 +267,7 @@ struct ComposerTextView: NSViewRepresentable {
                   let layoutManager = textView.layoutManager,
                   let container = textView.textContainer else { return }
             layoutManager.ensureLayout(for: container)
-            let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? .systemFont(ofSize: 13))
+            let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? .systemFont(ofSize: parent.fontSize))
             let used = layoutManager.usedRect(for: container).height
             let clamped = min(max(used, lineHeight), lineHeight * CGFloat(parent.maxVisibleLines))
             let height = ceil(clamped) + textView.textContainerInset.height * 2
@@ -304,6 +310,7 @@ struct ComposerTextView: NSViewRepresentable {
 /// editor (⌘E, Esc closes, ⌘↩ sends). Owns all transient typing state so
 /// keystrokes invalidate only this subtree.
 struct ComposerView: View {
+    @Environment(\.chatTextSize) private var fontSize
     @ObservedObject var model: ComposerModel
     /// Observed for the capability warning: it must re-resolve when the switcher
     /// commits a different provider/model while attachments are pending.
@@ -553,7 +560,9 @@ struct ComposerView: View {
         .overlay(alignment: .topLeading) {
             if draft.isEmpty {
                 Text(editorMode ? "Write a long prompt…" : "Message…  (“/” for shortcuts)")
-                    .font(.system(size: 13))
+                    .font(.system(size: fontSize))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .foregroundStyle(.tertiary)
                     .padding(.top, 2)
                     .allowsHitTesting(false)

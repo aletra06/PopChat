@@ -22,6 +22,7 @@ struct ChatView: View {
     /// can shrink to just chrome + input.
     var onCompactHeightChange: (CGFloat) -> Void = { _ in }
 
+    @AppStorage(ChatTextSize.key) private var chatTextSize = ChatTextSize.defaultSize
     @State private var composerModel = ComposerModel()
     @State private var draftEditorShown = false
     @State private var dropTargeted = false
@@ -64,6 +65,7 @@ struct ChatView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.chatTextSize, ChatTextSize.normalized(chatTextSize))
         .background { PanelGlassBackground() }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
@@ -686,6 +688,7 @@ private struct HeaderWidthKey: PreferenceKey {
 /// streaming ticks and keystrokes — no markdown segmentation, no
 /// attributed-string rebuilds, no measurement.
 private struct MessageRow: View, Equatable {
+    @Environment(\.chatTextSize) private var fontSize
     let message: ChatMessage
     /// True for the LAST row only, and only while the last turn can be re-run:
     /// it carries Retry / Edit prompt. Part of == like `find`, so the rest of
@@ -772,7 +775,7 @@ private struct MessageRow: View, Equatable {
                             SelectableText(
                                 attributed: MarkdownRenderer.plain(
                                     message.text,
-                                    color: Theme.bubbleForegroundNSColor(style: style, accentHex: accentHex)
+                                    color: Theme.bubbleForegroundNSColor(style: style, accentHex: accentHex), size: fontSize
                                 ),
                                 find: textFind
                             )
@@ -863,7 +866,7 @@ private struct MessageRow: View, Equatable {
             Label { Text(FindHighlight.paint(message.text, find: textFind)) } icon: {
                 Image(systemName: "sparkles")
             }
-                .font(.system(size: 11))
+                .font(.system(size: fontSize))
                 .foregroundStyle(.primary.opacity(0.5))
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .error:
@@ -871,7 +874,7 @@ private struct MessageRow: View, Equatable {
                 Label { Text(FindHighlight.paint(message.text, find: textFind)) } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                 }
-                    .font(.callout)
+                    .font(.system(size: fontSize))
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
                 if let action = capabilityAction {
@@ -948,6 +951,7 @@ private struct MessageRow: View, Equatable {
 /// renders the waiting indicator instead), so nothing here re-measures while
 /// reasoning is still arriving.
 private struct ReasoningDisclosure: View {
+    @Environment(\.chatTextSize) private var fontSize
     let text: String
 
     @State private var expanded = false
@@ -975,7 +979,7 @@ private struct ReasoningDisclosure: View {
             .buttonStyle(.plain)
             .help(expanded ? "Hide the model's thinking" : "Show the model's thinking")
             if expanded {
-                SelectableText(attributed: MarkdownRenderer.attributedReasoning(text))
+                SelectableText(attributed: MarkdownRenderer.attributedReasoning(text, fontSize: fontSize))
                     .padding(.leading, 10)
                     .overlay(alignment: .leading) {
                         Rectangle()
@@ -996,6 +1000,7 @@ private struct ReasoningDisclosure: View {
 /// per the caret rule, so no tick ever re-evaluates SwiftUI. Replaced by the
 /// normal caret/text rendering the moment the first characters commit.
 struct WaitingIndicator: View {
+    @Environment(\.chatTextSize) private var fontSize
     let status: String
     /// The model's thinking so far. When it is present the row shows a scrolling
     /// window onto it instead of the bare status — a reasoning model can spend a
@@ -1025,7 +1030,7 @@ struct WaitingIndicator: View {
                     .frame(width: 7, height: 7)
                     .opacity(pulsing ? 0.25 : 1)
                 Text(thinking ? "Thinking" : status)
-                    .font(.system(size: 13))
+                    .font(.system(size: fontSize))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1092,18 +1097,20 @@ struct WaitingIndicator: View {
 /// view is APPENDED to rather than rebuilt, since each update carries the same
 /// string plus a suffix.
 struct ThinkingScroller: NSViewRepresentable {
+    @Environment(\.chatTextSize) private var fontSize
     let text: String
     var lines: Int
 
-    static let font = NSFont.systemFont(ofSize: 11.5)
     /// The exact height `lines` of this font occupy — the harness pins the view
     /// to it, since a window that grows with its content is the whole bug.
-    static func height(lines: Int) -> CGFloat {
-        ceil(NSLayoutManager().defaultLineHeight(for: font)) * CGFloat(lines) + 4
+    static func height(lines: Int, fontSize: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize)
+        return ceil(NSLayoutManager().defaultLineHeight(for: font)) * CGFloat(lines) + 4
     }
 
     final class Coordinator {
         var shown = ""
+        var fontSize: CGFloat = 0
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -1134,17 +1141,19 @@ struct ThinkingScroller: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let textView = scroll.documentView as? NSTextView else { return }
         let shown = context.coordinator.shown
-        guard text != shown else { return }
+        let resized = context.coordinator.fontSize != fontSize
+        guard text != shown || resized else { return }
 
         // Whether to follow is decided BEFORE the append: a user who scrolled up
         // to read is reading, and yanking them back is the transcript's own rule.
         let following = context.coordinator.shown.isEmpty || isAtBottom(scroll)
-        if text.hasPrefix(shown) {
+        if !resized, text.hasPrefix(shown) {
             textView.textStorage?.append(rendered(String(text.dropFirst(shown.count))))
         } else {
             textView.textStorage?.setAttributedString(rendered(text))
         }
         context.coordinator.shown = text
+        context.coordinator.fontSize = fontSize
         // Unanimated, per the follow-scroll rule: at this update rate an
         // animation would restart every tick and layout would never settle.
         if following { textView.scrollToEndOfDocument(nil) }
@@ -1173,13 +1182,13 @@ struct ThinkingScroller: NSViewRepresentable {
 
     private func rendered(_ string: String) -> NSAttributedString {
         NSAttributedString(string: Self.stripEmphasis(string), attributes: [
-            .font: Self.font,
+            .font: NSFont.systemFont(ofSize: fontSize),
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 320, height: Self.height(lines: lines))
+        CGSize(width: proposal.width ?? 320, height: Self.height(lines: lines, fontSize: fontSize))
     }
 }
 

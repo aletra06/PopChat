@@ -43,6 +43,7 @@ struct SettingsView: View {
     @AppStorage("streamingMode") private var streamingModeRaw = StreamingMode.perCharacter.rawValue
     @AppStorage("liquidGlass") private var liquidGlass = true
     @AppStorage("panelTint") private var panelTint = -1.0
+    @AppStorage(ChatTextSize.key) private var chatTextSize = ChatTextSize.defaultSize
     @AppStorage("appearance") private var appearanceRaw = AppearanceChoice.auto.rawValue
     @AppStorage(UpdateChecker.automaticChecksKey) private var automaticUpdateChecks = true
     @AppStorage(CodexAppServerClient.executablePathKey) private var codexExecutablePath = ""
@@ -168,6 +169,25 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Chat text size")
+                        Spacer()
+                        Text("\(Int(ChatTextSize.normalized(chatTextSize))) pt")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        Button("Reset") { chatTextSize = ChatTextSize.defaultSize }
+                            .disabled(chatTextSize == ChatTextSize.defaultSize)
+                    }
+                    Slider(value: Binding(
+                        get: { ChatTextSize.normalized(chatTextSize) },
+                        set: { chatTextSize = ChatTextSize.normalized($0) }
+                    ), in: ChatTextSize.range, step: 1)
+                    .accessibilityLabel("Chat text size")
+                    Text("Messages and input. In chat: ⌘+ larger, ⌘− smaller, ⌘0 reset.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 appearanceRow
                 accentRow
                 Picker("Your message style", selection: $bubbleStyleRaw) {

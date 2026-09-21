@@ -1,5 +1,11 @@
 # PopChat
 
+This is [Alex's fork](https://github.com/aletra06/PopChat) of [lec77/PopChat](https://github.com/lec77/PopChat), with adjustable chat text size.
+
+Open **Settings > General > Chat text size** to choose 11-32 points. **⌘+** or **⌘=** enlarges text, **⌘−** reduces it, and **⌘0** resets to 16 points. Messages, code, tables, math, reasoning and the input field resize immediately, and the choice persists across restarts.
+
+Build this version with `./build.sh`. Installing an upstream release replaces the custom features; merge upstream changes here and rebuild to keep them.
+
 [![License: MIT](https://img.shields.io/github/license/lec77/PopChat)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
 ![Latest release](https://img.shields.io/github/v/release/lec77/PopChat)

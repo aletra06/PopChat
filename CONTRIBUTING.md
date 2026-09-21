@@ -23,6 +23,7 @@ Tools/                   fake app-server fixtures used by the smoke harnesses
 POPCHAT_API_KEY=… .build/debug/PopChat --smoke              # live streaming round-trip
 POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loop
 .build/debug/PopChat --smoke-file <path>                    # attachment extraction
+.build/debug/PopChat --smoke-font-size                      # live text sizing, shortcuts, draft and IME preservation
 .build/debug/PopChat --smoke-typing                         # composer latency budget
 .build/debug/PopChat --smoke-scroll                         # transcript scroll perf
 .build/debug/PopChat --smoke-find                           # find-in-chat behavior
