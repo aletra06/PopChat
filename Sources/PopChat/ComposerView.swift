@@ -123,7 +123,7 @@ struct ComposerTextView: NSViewRepresentable {
     var fillsHeight = false
     var maxVisibleLines = 8
     var focusBump = 0
-    var onHeightChange: (CGFloat) -> Void = { _ in }
+    var onHeightChange: (CGFloat, CGFloat) -> Void = { _, _ in }
     /// Return true to consume the key (completion/submit); false = default edit.
     var onReturn: () -> Bool = { false }
     var onMoveUp: () -> Bool = { false }
@@ -226,6 +226,7 @@ struct ComposerTextView: NSViewRepresentable {
         var lastFocusBump = Int.min
         var lastFillsHeight: Bool?
         private var lastHeight: CGFloat = -1
+        private var lastLineHeight: CGFloat = -1
         private var widthObserver: NSObjectProtocol?
 
         init(_ parent: ComposerTextView) {
@@ -275,10 +276,12 @@ struct ComposerTextView: NSViewRepresentable {
             let used = layoutManager.usedRect(for: container).height
             let clamped = min(max(used, lineHeight), lineHeight * CGFloat(parent.maxVisibleLines))
             let height = ceil(clamped) + textView.textContainerInset.height * 2
-            guard abs(height - lastHeight) > 0.5 else { return }
+            let singleLineHeight = ceil(lineHeight) + textView.textContainerInset.height * 2
+            guard abs(height - lastHeight) > 0.5 || singleLineHeight != lastLineHeight else { return }
             lastHeight = height
+            lastLineHeight = singleLineHeight
             let report = parent.onHeightChange
-            DispatchQueue.main.async { report(height) }
+            DispatchQueue.main.async { report(height, singleLineHeight) }
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -309,10 +312,15 @@ struct ComposerTextView: NSViewRepresentable {
     }
 }
 
+private enum ComposerLineCenter: AlignmentID {
+    static func defaultValue(in dimensions: ViewDimensions) -> CGFloat {
+        dimensions[VerticalAlignment.center]
+    }
+}
+
 /// The input area: capsule field (grows to 8 lines, then scrolls), slash-command
-/// popup, attachment chips, hint row — or, in editor mode, a full-height draft
-/// editor (⌘E, Esc closes, ⌘↩ sends). Owns all transient typing state so
-/// keystrokes invalidate only this subtree.
+/// popup, attachment chips, hint row, or a full-height draft editor (⌘E).
+/// Owns all transient typing state so keystrokes invalidate only this subtree.
 struct ComposerView: View {
     @Environment(\.chatTextSize) private var fontSize
     @ObservedObject var model: ComposerModel
@@ -331,6 +339,7 @@ struct ComposerView: View {
     @State private var draft = ""
     @State private var completionIndex = 0
     @State private var inputHeight: CGFloat = 21
+    @State private var singleLineHeight: CGFloat = 21
     /// ↑ recall. Nil means "not browsing"; otherwise a snapshot of the history
     /// taken when the walk started — so a send landing mid-walk can't shift the
     /// list under the user — together with the position in it. One optional
@@ -436,25 +445,22 @@ struct ComposerView: View {
                 .padding(.trailing, 10)
                 .transition(Self.chromeFade)
             }
-            // Bottom alignment keeps the buttons on the LAST text line as the
-            // field grows. At one line the field row is 31pt (21 + 2×5) against
-            // 24pt icon slots — without compensation the icons sag 3.5pt below
-            // the text center. The bottom padding lifts each 24pt slot's center
-            // to 15.5pt from the row bottom: the text line's center, and level
-            // with the 30pt send slot (center 15).
-            HStack(alignment: .bottom, spacing: 10) {
+            // Center every control on the last visible line using AppKit's
+            // measured font metrics, including the text and field insets.
+            HStack(alignment: VerticalAlignment(ComposerLineCenter.self), spacing: 10) {
                 if !editorMode {
                     attachButton
-                        .padding(.bottom, 3.5)
                         .transition(Self.chromeFade)
                     globeButton
-                        .padding(.bottom, 3.5)
                         .transition(Self.chromeFade)
                 }
                 composerField
                     .frame(height: editorMode ? nil : inputHeight)
                     .frame(maxHeight: editorMode ? .infinity : nil)
                     .padding(.vertical, editorMode ? 8 : 5)
+                    .alignmentGuide(VerticalAlignment(ComposerLineCenter.self)) { dimensions in
+                        editorMode ? dimensions.height / 2 : dimensions.height - (singleLineHeight + 10) / 2
+                    }
                 if !editorMode {
                     Button {
                         editorMode = true
@@ -467,7 +473,6 @@ struct ComposerView: View {
                     }
                     .keyboardShortcut("e", modifiers: .command)
                     .help("Expand editor (⌘E)")
-                    .padding(.bottom, 3.5)
                     .transition(Self.chromeFade)
                     sendOrStopButton(size: 26)
                         .transition(Self.chromeFade)
@@ -524,7 +529,10 @@ struct ComposerView: View {
             fillsHeight: editorMode,
             maxVisibleLines: 8,
             focusBump: focusBump,
-            onHeightChange: { inputHeight = $0 },
+            onHeightChange: { height, lineHeight in
+                inputHeight = height
+                singleLineHeight = lineHeight
+            },
             onReturn: {
                 if !completionCandidates.isEmpty {
                     complete()

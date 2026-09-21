@@ -35,6 +35,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 
 Use `--shot math <path> --dark` or `--light` to inspect the quadratic-formula answer in a real restored chat.
 Use `--shot code <path> --dark` or `--light` for a restored Python card alongside an ordinary copyable note.
+Use `--shot composer <path> --font-size 32 --dark` to inspect input alignment. Add `--draft-lines 3`, `--streaming`, or `--expanded` to check multiline input, the stop button, and the expanded editor. Check the smallest (11 pt), default (16 pt), and largest (32 pt) sizes.
 
 The check-list harnesses share `CheckLog` (`check` / `finish`) and the GUI ones share `composerTextView(in:)`, `sendKey(...)` and `sendArrow(...)` - add to those rather than re-declaring a local copy.
 

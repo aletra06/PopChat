@@ -2560,6 +2560,33 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
         let content: NSView
         let size: NSSize
         switch which {
+        case "composer":
+            let model = ComposerModel()
+            let sizeIndex = CommandLine.arguments.firstIndex(of: "--font-size")
+            let requestedSize = sizeIndex.flatMap { index in
+                CommandLine.arguments.indices.contains(index + 1) ? Double(CommandLine.arguments[index + 1]) : nil
+            } ?? 16
+            let linesIndex = CommandLine.arguments.firstIndex(of: "--draft-lines")
+            let draftLines = linesIndex.flatMap { index in
+                CommandLine.arguments.indices.contains(index + 1) ? Int(CommandLine.arguments[index + 1]) : nil
+            } ?? 0
+            content = NSHostingView(rootView: VStack {
+                Spacer()
+                ComposerView(
+                    model: model, providerStore: store, shortcutStore: ShortcutStore(),
+                    isStreaming: CommandLine.arguments.contains("--streaming"), focusBump: 0,
+                    editorMode: .constant(CommandLine.arguments.contains("--expanded")),
+                    onSend: { _, _ in }, onStop: {}, onFocusRequest: {}, onClose: {}
+                )
+            }
+                .environment(\.chatTextSize, CGFloat(ChatTextSize.normalized(requestedSize)))
+                .background(Color(nsColor: .windowBackgroundColor)))
+            size = NSSize(width: 640, height: draftLines > 1 || CommandLine.arguments.contains("--expanded") ? 420 : 140)
+            if draftLines > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    model.injectedDraft = (1...draftLines).map { "Line \($0): a short prompt" }.joined(separator: "\n")
+                }
+            }
         case "switcher", "switcher-effort":
             content = NSHostingView(rootView: ProviderSwitcher(store: store)
                 .padding(20)
