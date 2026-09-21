@@ -6,4 +6,6 @@ This fork adds readable chat text for high-resolution Mac displays. The upstream
 
 The setting covers messages, reasoning, code, tables, math and the composer. Toolbar controls keep their existing sizes. `FloatingPanel` handles the shortcuts only inside the chat window, using characters to support different keyboard layouts.
 
+Math uses the bundled SwiftMath renderer. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported inline LaTeX stays visible as source text.
+
 Upstream update checks only notify; they do not install anything. Installing an upstream release would replace these additions. To update this version, merge upstream changes into this fork and rebuild.

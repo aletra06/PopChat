@@ -25,7 +25,7 @@ enum MarkdownRenderer {
         }
     }
 
-    /// Splits fences (an unclosed fence mid-stream renders as code), `$$` display
+    /// Splits fences (an unclosed fence mid-stream renders as code), display
     /// math, `>` blockquotes and pipe tables out of the prose flow.
     static func segments(_ markdown: String) -> [Segment] {
         var result: [Segment] = []
@@ -84,21 +84,29 @@ enum MarkdownRenderer {
                 continue
             }
 
-            if trimmed == "$$" || (trimmed.hasPrefix("$$") && trimmed.hasSuffix("$$") && trimmed.count > 4) {
+            if let delimiter = ["$$", #"\["#].first(where: { trimmed.hasPrefix($0) }) {
                 flushProse()
-                if trimmed.count > 4 {
-                    result.append(.math(String(trimmed.dropFirst(2).dropLast(2))))
-                    i += 1
-                    continue
-                }
+                let close = delimiter == "$$" ? "$$" : #"\]"#
                 var math: [String] = []
-                i += 1
-                while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces) != "$$" {
-                    math.append(lines[i])
+                var remainder = String(trimmed.dropFirst(delimiter.count))
+                while true {
+                    if let end = remainder.range(of: close) {
+                        math.append(String(remainder[..<end.lowerBound]))
+                        let trailing = String(remainder[end.upperBound...])
+                        result.append(.math(math.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)))
+                        prose.append(trailing)
+                        i += 1
+                        break
+                    }
+                    math.append(remainder)
                     i += 1
+                    if i == lines.count {
+                        // A partial streamed block stays visible until its delimiter arrives.
+                        result.append(.math(math.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)))
+                        break
+                    }
+                    remainder = lines[i]
                 }
-                result.append(.math(math.joined(separator: "\n")))
-                i += 1
                 continue
             }
 
@@ -175,8 +183,9 @@ enum MarkdownRenderer {
     /// and rendering measure the same string.
     static func tableCell(_ text: String, bold: Bool = false, fontSize: CGFloat = 12) -> NSAttributedString {
         let font = bold ? NSFont.boldSystemFont(ofSize: fontSize) : NSFont.systemFont(ofSize: fontSize)
+        let (source, mathParts) = extractInlineMath(text)
         guard let parsed = try? AttributedString(
-            markdown: text,
+            markdown: source,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) else {
             return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
@@ -184,6 +193,7 @@ enum MarkdownRenderer {
         let result = NSMutableAttributedString(attributedString: NSAttributedString(parsed))
         result.addAttributes([.font: font, .foregroundColor: NSColor.labelColor],
                              range: NSRange(location: 0, length: result.length))
+        substituteInlineMath(in: result, parts: mathParts, fontSize: fontSize)
         return result
     }
 
@@ -275,11 +285,7 @@ enum MarkdownRenderer {
     private static func buildProse(_ markdown: String, fontSize: CGFloat) -> NSAttributedString {
         // Inline math is swapped for placeholder tokens before markdown parsing
         // (so the parser can't mangle it), then replaced with rendered attachments.
-        var mathParts: [String] = []
-        var source = markdown
-        if markdown.contains("$") {
-            (source, mathParts) = extractInlineMath(markdown)
-        }
+        let (source, mathParts) = extractInlineMath(markdown)
 
         let baseSize = fontSize
         let scale = fontSize / NSFont.systemFontSize
@@ -493,44 +499,49 @@ enum MarkdownRenderer {
         return image
     }
 
-    /// Matches `$…$` spans that plausibly contain math (no surrounding spaces, and
-    /// either math syntax characters or no whitespace at all) and swaps them for
-    /// placeholder tokens the markdown parser passes through untouched.
-    private static func extractInlineMath(_ markdown: String) -> (String, [String]) {
-        guard let regex = try? NSRegularExpression(pattern: #"\$([^\s$](?:[^$\n]*[^\s$])?)\$"#) else {
-            return (markdown, [])
-        }
-        let text = markdown as NSString
-        var parts: [String] = []
-        var result = markdown
-        let matches = regex.matches(in: markdown, range: NSRange(location: 0, length: text.length))
-        for match in matches.reversed() {
-            let content = text.substring(with: match.range(at: 1))
-            let mathy = content.rangeOfCharacter(from: CharacterSet(charactersIn: "\\^_{}=")) != nil
-                || !content.contains(" ")
-            guard mathy else { continue }
-            parts.insert(content, at: 0)
-            let start = result.index(result.startIndex, offsetBy: match.range.location)
-            let end = result.index(start, offsetBy: match.range.length)
-            result.replaceSubrange(start..<end, with: "⟦M\(match.range.location)⟧")
-        }
-        // Re-key tokens by order of appearance so substitution can find them.
-        var ordered = result
-        var index = 0
-        while let tokenRange = ordered.range(of: #"⟦M\d+⟧"#, options: .regularExpression) {
-            ordered.replaceSubrange(tokenRange, with: "⟦MATH\(index)⟧")
-            index += 1
-        }
-        return (ordered, parts)
+    private struct InlineMath {
+        let token: String
+        let latex: String
+        let original: String
     }
 
-    private static func substituteInlineMath(in result: NSMutableAttributedString, parts: [String], fontSize: CGFloat) {
-        for (index, latex) in parts.enumerated() {
-            let token = "⟦MATH\(index)⟧"
-            let range = (result.string as NSString).range(of: token)
+    // Consume code spans and escaped delimiters first, before matching math.
+    // Dollar math keeps its conservative heuristic so prices remain plain text.
+    private static let inlineMathPattern = try! NSRegularExpression(
+        pattern: #"(`+)[\s\S]*?\1(?!`)|\\[\\$]|\\\(([^\n]*?)\\\)|(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)"#
+    )
+
+    private static func extractInlineMath(_ markdown: String) -> (String, [InlineMath]) {
+        guard markdown.contains("$") || markdown.contains(#"\("#) else { return (markdown, []) }
+        let text = markdown as NSString
+        var parts: [InlineMath] = []
+        let result = NSMutableString(string: markdown)
+        let prefix = "⟦MATH\(UUID().uuidString)"
+        let matches = inlineMathPattern.matches(in: markdown, range: NSRange(location: 0, length: text.length))
+        for match in matches.reversed() {
+            let explicit = match.range(at: 2).location != NSNotFound
+            let range = match.range(at: explicit ? 2 : 3)
+            guard range.location != NSNotFound else { continue }
+            let content = text.substring(with: range)
+            if !explicit {
+                let mathy = content.rangeOfCharacter(from: CharacterSet(charactersIn: "\\^_{}=")) != nil
+                    || content.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+                guard mathy else { continue }
+            }
+            let token = "\(prefix)\(parts.count)⟧"
+            parts.append(InlineMath(token: token, latex: content, original: text.substring(with: match.range)))
+            // Regex ranges use UTF-16, including when emoji precede an equation.
+            result.replaceCharacters(in: match.range, with: token)
+        }
+        return (result as String, parts)
+    }
+
+    private static func substituteInlineMath(in result: NSMutableAttributedString, parts: [InlineMath], fontSize: CGFloat) {
+        for part in parts {
+            let range = (result.string as NSString).range(of: part.token)
             guard range.location != NSNotFound else { continue }
             let font = NSFont.systemFont(ofSize: fontSize)
-            if let image = mathImage(latex, fontSize: fontSize, display: false) {
+            if let image = mathImage(part.latex, fontSize: fontSize, display: false) {
                 let attachment = NSTextAttachment()
                 attachment.image = image
                 attachment.bounds = CGRect(
@@ -539,9 +550,12 @@ enum MarkdownRenderer {
                     width: image.size.width,
                     height: image.size.height
                 )
-                result.replaceCharacters(in: range, with: NSAttributedString(attachment: attachment))
+                let replacement = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+                replacement.addAttributes(result.attributes(at: range.location, effectiveRange: nil),
+                                          range: NSRange(location: 0, length: replacement.length))
+                result.replaceCharacters(in: range, with: replacement)
             } else {
-                result.replaceCharacters(in: range, with: "$\(latex)$")
+                result.replaceCharacters(in: range, with: part.original)
             }
         }
     }

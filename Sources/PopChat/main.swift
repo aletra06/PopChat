@@ -8,6 +8,11 @@ import SwiftMath
 // dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
 PopChatInstallResourceBundleRedirect()
 
+if CommandLine.arguments.contains("--smoke-math") {
+    _ = NSApplication.shared
+    MainActor.assumeIsolated { runMathChecks() }
+}
+
 if CommandLine.arguments.contains("--smoke-font-size") {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
@@ -2585,7 +2590,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             )
                 .background(Color(nsColor: .windowBackgroundColor)))
             size = NSSize(width: 268, height: 190)
-        case "transcript":
+        case "transcript", "math":
             // A finished turn with thinking attached, so the reasoning
             // disclosure and the last row's Retry / Edit prompt actions can be
             // eyeballed without driving a live provider. A scratch store keeps
@@ -2605,11 +2610,11 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             ConversationStore.save(Conversation(
                 id: UUID(), title: "Why is the sky blue?", updatedAt: Date(),
                 messages: [
-                    ChatMessage(role: .user, text: "Why is the sky blue?"),
+                    ChatMessage(role: .user, text: which == "math" ? "What is the quadratic formula?" : "Why is the sky blue?"),
                     ChatMessage(
                         role: .assistant,
-                        text: "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
-                        reasoning: "**Considering the physics**\n\nRayleigh scattering goes as 1/λ⁴, so blue scatters far more than red.\n\nThe answer should stay short — this is a quick-chat panel."
+                        text: which == "math" ? mathExample : "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
+                        reasoning: which == "math" ? nil : "**Considering the physics**\n\nRayleigh scattering goes as 1/λ⁴, so blue scatters far more than red.\n\nThe answer should stay short - this is a quick-chat panel."
                     ),
                 ]
             ))
@@ -2618,7 +2623,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                 state: PanelState(), store: chatStore, providerStore: store,
                 shortcutStore: ShortcutStore(), onClose: {}
             ))
-            size = NSSize(width: 560, height: 420)
+            size = NSSize(width: 560, height: which == "math" ? 600 : 420)
         default:
             content = NSHostingView(rootView: SettingsView(
                 store: store, shortcutStore: ShortcutStore(),
