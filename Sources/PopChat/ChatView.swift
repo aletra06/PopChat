@@ -21,6 +21,7 @@ struct ChatView: View {
     /// Reports the natural content height while the chat is empty, so the panel
     /// can shrink to just chrome + input.
     var onCompactHeightChange: (CGFloat) -> Void = { _ in }
+    var onMakeDefaultLocation: () -> Void = {}
 
     @AppStorage(ChatTextSize.key) private var chatTextSize = ChatTextSize.defaultSize
     @State private var composerModel = ComposerModel()
@@ -139,6 +140,22 @@ struct ChatView: View {
                 onFocusRequest: { state.focusBump += 1 },
                 onClose: onClose
             )
+            if state.awayFromDefaultLocation {
+                Button(action: onMakeDefaultLocation) {
+                    Text("Make default location?")
+                        .font(.system(size: 11.5))
+                        .underline()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Open PopChat here next time")
+                .opacity(state.draggingWindow ? 0 : 1)
+                .disabled(state.draggingWindow)
+                .padding(.bottom, 8)
+            }
         }
         .background(
             GeometryReader { geometry in

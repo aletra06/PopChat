@@ -8,6 +8,13 @@ import SwiftMath
 // dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
 PopChatInstallResourceBundleRedirect()
 
+if CommandLine.arguments.contains("--smoke-placement") || CommandLine.arguments.contains("--preview-placement") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    Task { @MainActor in await runPlacementChecks(preview: CommandLine.arguments.contains("--preview-placement")) }
+    app.run()
+}
+
 if CommandLine.arguments.contains("--smoke-highlighting") {
     _ = NSApplication.shared
     MainActor.assumeIsolated { runHighlightingChecks() }

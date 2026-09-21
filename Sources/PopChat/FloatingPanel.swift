@@ -7,6 +7,7 @@ import SwiftUI
 final class FloatingPanel: NSPanel {
     var onCancel: (() -> Void)?
     var onAttachablePaste: (() -> Void)?
+    weak var placement: PanelPlacement?
 
     init(contentRect: NSRect) {
         super.init(
@@ -78,7 +79,19 @@ final class FloatingPanel: NSPanel {
 /// the only draggable region of the panel.
 final class WindowDragView: NSView {
     override func mouseDown(with event: NSEvent) {
-        window?.performDrag(with: event)
+        guard let panel = window as? FloatingPanel, let placement = panel.placement else {
+            window?.performDrag(with: event)
+            return
+        }
+        placement.prepareDrag(at: NSEvent.mouseLocation)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        (window as? FloatingPanel)?.placement?.drag(to: NSEvent.mouseLocation)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        (window as? FloatingPanel)?.placement?.endDrag()
     }
 
     /// The strip overlays the transcript; forward scroll events so two-finger

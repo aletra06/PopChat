@@ -11,6 +11,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     let chatStore: ChatStore // internal for the sizing smoke harness
     private var cancellables: Set<AnyCancellable> = []
     private var isHiding = false
+    private let placementDefaults: UserDefaults
+    private lazy var placement = PanelPlacement(window: panel, state: state, defaults: placementDefaults)
     /// Last content height reported by the compact (no messages) layout.
     private var lastCompactHeight: CGFloat?
     /// Distinguishes "a stored chat was restored" from "the first message was
@@ -56,9 +58,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         )
     }
 
-    init(providerStore: ProviderStore, shortcutStore: ShortcutStore) {
+    init(providerStore: ProviderStore, shortcutStore: ShortcutStore, placementDefaults: UserDefaults = .standard) {
         self.providerStore = providerStore
         self.shortcutStore = shortcutStore
+        self.placementDefaults = placementDefaults
         self.chatStore = ChatStore(providerStore: providerStore, shortcutStore: shortcutStore)
         super.init()
         // The launch resume already bumped the tick; only later restores count.
@@ -92,7 +95,8 @@ final class PanelController: NSObject, NSWindowDelegate {
                 providerStore: providerStore,
                 shortcutStore: shortcutStore,
                 onClose: { [weak self] in self?.dismiss() },
-                onCompactHeightChange: { [weak self] height in self?.compactHeightChanged(height) }
+                onCompactHeightChange: { [weak self] height in self?.compactHeightChanged(height) },
+                onMakeDefaultLocation: { [weak self] in self?.placement.saveDefault() }
             )
         )
         // CRITICAL for typing latency: with the default sizingOptions, every
@@ -198,6 +202,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         guard panel.isVisible, !isHiding else { return }
+        placement.endDrag()
         isHiding = true
         if !reduceMotion, let layer = panel.contentView?.layer {
             let shrink = Self.transformAnimation(
@@ -250,26 +255,24 @@ final class PanelController: NSObject, NSWindowDelegate {
         return animation
     }
 
-    /// Where the user last dragged the panel (top-left, stable across the
-    /// top-anchored height changes); nil until they move it.
+    /// Legacy location, migrated to an explicit default on first use.
     private var savedTopLeft: NSPoint? {
-        get {
-            let stored = UserDefaults.standard.string(forKey: "panelTopLeft")
-            let parts = (stored ?? "").split(separator: ",")
-            guard parts.count == 2, let x = Double(parts[0]), let y = Double(parts[1]) else { return nil }
-            return NSPoint(x: x, y: y)
-        }
-        set {
-            guard let point = newValue else { return }
-            UserDefaults.standard.set("\(point.x),\(point.y)", forKey: "panelTopLeft")
-        }
+        let stored = UserDefaults.standard.string(forKey: "panelTopLeft")
+        let parts = (stored ?? "").split(separator: ",")
+        guard parts.count == 2, let x = Double(parts[0]), let y = Double(parts[1]),
+              x.isFinite, y.isFinite else { return nil }
+        return NSPoint(x: x, y: y)
     }
 
-    /// The user's last position when they've moved the panel (validated against
-    /// the current screens); otherwise slightly below the center of the screen
-    /// the cursor is on (user decision 2026-07-21 — overrides the design doc's
-    /// upper-center placement).
+    /// Open at the explicit default. First launch migrates the legacy position,
+    /// or starts slightly below the center of the display under the pointer.
     private func position() {
+        panel.placement = placement
+        if let screen = placement.defaultScreen {
+            shrinkToFit(screen)
+            placement.restoreDefault()
+            return
+        }
         if let topLeft = savedTopLeft {
             let size = panel.frame.size
             let frame = NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
@@ -281,6 +284,7 @@ final class PanelController: NSObject, NSWindowDelegate {
                 // Clamp first: it can shrink the panel, which moves the bottom edge.
                 shrinkToFit(host)
                 panel.setFrameOrigin(NSPoint(x: topLeft.x, y: topLeft.y - panel.frame.height))
+                placement.saveDefault()
                 return
             }
         }
@@ -296,6 +300,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             y: visible.minY + visible.height * 0.45 - size.height / 2
         )
         panel.setFrameOrigin(origin)
+        placement.saveDefault()
     }
 
     /// Keeps the panel no bigger than the screen it opens on. Persisted sizes
@@ -417,15 +422,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    // Fires for user drags (and for the top-anchored height changes, whose
-    // top-left is invariant, so saving is harmless). Programmatic positioning
-    // happens before the panel is visible and is excluded by the guard.
-    func windowDidMove(_ notification: Notification) {
-        guard panel.isVisible, !isHiding else { return }
-        let frame = panel.frame
-        savedTopLeft = NSPoint(x: frame.origin.x, y: frame.maxY)
-    }
-
     func windowDidEndLiveResize(_ notification: Notification) {
         let content = panel.contentRect(forFrameRect: panel.frame)
         // Width persists from either state; the height only means something when
@@ -434,5 +430,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         if !chatStore.messages.isEmpty {
             expandedHeight = content.height
         }
+        placement.refreshLocationStatus()
     }
 }

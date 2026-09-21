@@ -9,4 +9,6 @@ final class PanelState: ObservableObject {
     /// Bumped every time the panel is shown or re-focused; the chat view observes
     /// this to move keyboard focus into the input field.
     @Published var focusBump = 0
+    @Published var awayFromDefaultLocation = false
+    @Published var draggingWindow = false
 }
