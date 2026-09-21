@@ -43,16 +43,25 @@ func runPlacementChecks(preview: Bool = false) async -> Never {
     let original = window.frame
     let saved = defaults.data(forKey: PanelPlacement.defaultsKey)
     let pointer = NSPoint(x: original.midX, y: original.maxY - 15)
+    let keyBeforeDrag = NSApp.keyWindow
     placement.prepareDrag(at: pointer)
     placement.drag(to: NSPoint(x: pointer.x + 110, y: pointer.y - 60))
     log.check("drag moves the real window", abs(window.frame.minX - original.minX - 110) < 1)
     let guides = NSApp.windows.filter { $0 !== window && $0.isVisible && $0.ignoresMouseEvents }
     log.check("default outline appears without intercepting mouse events", !guides.isEmpty)
-    log.check("guide does not take keyboard focus", NSApp.keyWindow === window)
+    log.check("guide does not take keyboard focus", NSApp.keyWindow === keyBeforeDrag && guides.allSatisfy { !$0.isKeyWindow })
     placement.endDrag()
     log.check("guide disappears on release", guides.allSatisfy { !$0.isVisible })
     log.check("moving away offers saving", controller.state.awayFromDefaultLocation)
     log.check("dragging never overwrites the default", defaults.data(forKey: PanelPlacement.defaultsKey) == saved)
+
+    let movedFrame = window.frame
+    controller.hide()
+    try? await Task.sleep(for: .milliseconds(200))
+    controller.show()
+    try? await Task.sleep(for: .milliseconds(250))
+    log.check("hide and reopen preserve the temporary location", window.frame.origin == movedFrame.origin)
+    log.check("reopening away from default retains the save action", controller.state.awayFromDefaultLocation)
 
     placement.prepareDrag(at: pointer)
     placement.drag(to: NSPoint(x: pointer.x - 102, y: pointer.y + 54))
@@ -81,7 +90,7 @@ func runPlacementChecks(preview: Bool = false) async -> Never {
     let newDefault = window.frame
     window.setFrameOrigin(NSPoint(x: original.minX + 180, y: original.minY))
     placement.restoreDefault()
-    log.check("reopen restores chosen default", window.frame == newDefault)
+    log.check("explicit restore uses chosen default", window.frame == newDefault)
     let reloaded = PanelPlacement(window: window, state: controller.state, defaults: defaults)
     window.setFrameOrigin(original.origin)
     reloaded.restoreDefault()
@@ -107,6 +116,54 @@ func runPlacementChecks(preview: Bool = false) async -> Never {
     log.check("snap holds near boundary", snapping.atDefault)
     _ = snapping.frame(for: target.offsetBy(dx: 40, dy: 0), defaultFrame: target, screen: small)
     log.check("snap releases beyond 30 points", !snapping.atDefault)
+
+    window.setFrameOrigin(NSPoint(x: newDefault.minX + 80, y: newDefault.minY))
+    placement.refreshLocationStatus()
+    let savedHistory = UserDefaults.standard.object(forKey: "promptHistory")
+    if let editor = composerTextView(in: window.contentView) {
+        window.makeFirstResponder(editor)
+        // Unknown shortcuts fail locally, so this exercises the real send
+        // action without contacting a provider or spending model quota.
+        editor.insertText("/__placement_check_unknown__", replacementRange: NSRange(location: NSNotFound, length: 0))
+        _ = sendKey("\r", keyCode: 36, to: window)
+        try? await Task.sleep(for: .milliseconds(200))
+        log.check("sending a prompt dismisses the location action", controller.state.defaultLocationPromptDismissed)
+    } else {
+        log.check("composer exists for the send check", false)
+    }
+    UserDefaults.standard.set(savedHistory, forKey: "promptHistory")
+    controller.hide()
+    try? await Task.sleep(for: .milliseconds(200))
+    controller.show()
+    try? await Task.sleep(for: .milliseconds(250))
+    log.check("reopening does not reshow the dismissed action", controller.state.defaultLocationPromptDismissed)
+    placement.prepareDrag(at: pointer)
+    placement.drag(to: NSPoint(x: pointer.x + 40, y: pointer.y))
+    placement.endDrag()
+    log.check("another drag offers saving the location again", !controller.state.defaultLocationPromptDismissed && controller.state.awayFromDefaultLocation)
+    let beforeNewChat = window.frame
+    controller.chatStore.newChat()
+    try? await Task.sleep(for: .milliseconds(500))
+    log.check("new chat preserves horizontal center and top edge",
+              abs(window.frame.midX - beforeNewChat.midX) < 1 && abs(window.frame.maxY - beforeNewChat.maxY) < 1)
+    let emptyFrame = window.frame
+    controller.hide()
+    try? await Task.sleep(for: .milliseconds(200))
+    controller.show()
+    try? await Task.sleep(for: .milliseconds(250))
+    log.check("empty chat also keeps its location when reopened", window.frame == emptyFrame)
+
+    controller.hide()
+    try? await Task.sleep(for: .milliseconds(200))
+    let restarted = PanelController(providerStore: ProviderStore(), shortcutStore: ShortcutStore(), placementDefaults: defaults)
+    restarted.state.pinned = true
+    restarted.show()
+    try? await Task.sleep(for: .milliseconds(500))
+    let restartedWindow = NSApp.windows.first { $0 is FloatingPanel && $0 !== window && $0.isVisible }
+    log.check("a fresh app controller restores the default", restartedWindow.map {
+        abs($0.frame.midX - newDefault.midX) < 1 && abs($0.frame.maxY - newDefault.maxY) < 1
+    } ?? false)
+    restarted.hide()
 
     controller.hide()
     try? await Task.sleep(for: .milliseconds(200))

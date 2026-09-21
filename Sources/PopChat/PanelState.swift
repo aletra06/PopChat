@@ -11,4 +11,5 @@ final class PanelState: ObservableObject {
     @Published var focusBump = 0
     @Published var awayFromDefaultLocation = false
     @Published var draggingWindow = false
+    @Published var defaultLocationPromptDismissed = false
 }

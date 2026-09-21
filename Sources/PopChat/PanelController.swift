@@ -11,6 +11,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     let chatStore: ChatStore // internal for the sizing smoke harness
     private var cancellables: Set<AnyCancellable> = []
     private var isHiding = false
+    private var hasShown = false
     private let placementDefaults: UserDefaults
     private lazy var placement = PanelPlacement(window: panel, state: state, defaults: placementDefaults)
     /// Last content height reported by the compact (no messages) layout.
@@ -178,7 +179,12 @@ final class PanelController: NSObject, NSWindowDelegate {
         if chatStore.messages.isEmpty {
             setContentHeight(lastCompactHeight ?? Self.compactMinHeight, animated: false)
         }
-        position()
+        if !hasShown {
+            position()
+            hasShown = true
+        } else {
+            placement.keepOnAvailableDisplay()
+        }
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         if !reduceMotion, let layer = panel.contentView?.layer {

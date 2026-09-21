@@ -135,12 +135,15 @@ struct ChatView: View {
                 isStreaming: store.isStreaming,
                 focusBump: state.focusBump,
                 editorMode: $draftEditorShown,
-                onSend: { text, attachments in store.send(text, attachments: attachments) },
+                onSend: { text, attachments in
+                    state.defaultLocationPromptDismissed = true
+                    store.send(text, attachments: attachments)
+                },
                 onStop: { store.stop() },
                 onFocusRequest: { state.focusBump += 1 },
                 onClose: onClose
             )
-            if state.awayFromDefaultLocation {
+            if state.awayFromDefaultLocation && !state.defaultLocationPromptDismissed {
                 Button(action: onMakeDefaultLocation) {
                     Text("Make default location?")
                         .font(.system(size: 11.5))
@@ -151,7 +154,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Open PopChat here next time")
+                .help("Start PopChat here after restarting the app")
                 .opacity(state.draggingWindow ? 0 : 1)
                 .disabled(state.draggingWindow)
                 .padding(.bottom, 8)

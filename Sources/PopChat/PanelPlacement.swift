@@ -74,7 +74,7 @@ final class PanelPlacement {
                 guard let self, self.window.isVisible else { return }
                 self.endDrag()
                 self.fallbackDisplayID = nil
-                self.restoreDefault()
+                self.keepOnAvailableDisplay()
             }
         }
     }
@@ -108,6 +108,21 @@ final class PanelPlacement {
         refreshLocationStatus()
     }
 
+    /// Preserve the session position unless its display disappeared and the
+    /// window is no longer reachable. Recover onto a screen without using the
+    /// default location or changing the saved anchor.
+    func keepOnAvailableDisplay() {
+        let reachable = NSScreen.screens.contains { screen in
+            let overlap = window.frame.intersection(screen.visibleFrame)
+            return overlap.width >= 120 && overlap.height >= 80
+        }
+        if !reachable, let screen = NSScreen.main ?? NSScreen.screens.first {
+            let current = PanelAnchor(frame: window.frame, visibleFrame: screen.visibleFrame, displayID: 0)
+            window.setFrame(current.frame(size: window.frame.size, on: screen.visibleFrame), display: window.isVisible)
+        }
+        refreshLocationStatus()
+    }
+
     func saveDefault() {
         guard let screen = window.screen ?? NSScreen.main else { return }
         anchor = PanelAnchor(frame: window.frame, visibleFrame: screen.visibleFrame, displayID: Self.displayID(screen))
@@ -132,6 +147,7 @@ final class PanelPlacement {
         if !state.draggingWindow {
             guard hypot(point.x - start.point.x, point.y - start.point.y) >= 2 else { return }
             state.draggingWindow = true
+            state.defaultLocationPromptDismissed = false
         }
         // The composer or a first response can change the height mid-drag.
         // Keep the grabbed top edge under the pointer using the current size.
