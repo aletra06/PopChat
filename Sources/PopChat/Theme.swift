@@ -78,7 +78,6 @@ enum Theme {
     static let defaultAccentHex = "#0A84FF"
 
     static let warningOrange = color("#FF9F0A")
-    static let stopRed = color("#FF453A")
     /// Warning text needs a darker tone on light backgrounds to stay readable.
     static let warningTextLight = color("#C93400")
 

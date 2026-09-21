@@ -37,6 +37,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 Use `--shot math <path> --dark` or `--light` to inspect the quadratic-formula answer in a real restored chat.
 Use `--shot code <path> --dark` or `--light` for a restored Python card alongside an ordinary copyable note.
 Use `--shot composer <path> --font-size 32 --dark` to inspect input alignment. Add `--draft-lines 3`, `--streaming`, or `--expanded` to check multiline input, the stop button, and the expanded editor. Check the smallest (11 pt), default (16 pt), and largest (32 pt) sizes.
+Add `--accent '#BF5AF2'` to check composer controls with a preset or custom theme color.
 
 `--preview-placement` opens a real panel with fixture messages and isolated location preferences for manual dragging and the save-location action. `--show-guide` starts it with the dashed default outline visible. Escape closes the preview and removes its fixtures.
 

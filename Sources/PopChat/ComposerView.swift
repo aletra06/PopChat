@@ -588,7 +588,7 @@ struct ComposerView: View {
             Button(action: onStop) {
                 Image(systemName: "stop.circle.fill")
                     .font(.system(size: size))
-                    .foregroundStyle(Theme.stopRed)
+                    .foregroundStyle(accent)
                     .frame(width: size + 4, height: size + 4)
                     .contentShape(Circle())
             }

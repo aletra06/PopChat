@@ -2523,7 +2523,8 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
         }
         // A custom accent already chosen, so the row renders its selected state
         // (`--no-custom` renders the untouched state instead).
-        if which == "general", !CommandLine.arguments.contains("--no-custom") {
+        if which == "general" || (which == "composer" && CommandLine.arguments.contains("--accent")),
+           !CommandLine.arguments.contains("--no-custom") {
             // `--accent <hex>` overrides, for checking a fill's text color.
             var accent = "#E0655B"
             if let index = CommandLine.arguments.firstIndex(of: "--accent"),
