@@ -1,5 +1,5 @@
 {
-  "originHash" : "94ff0a4f356def5bf610f6d5db3b8cccb30ad9ad0b615c1563213ab407a04b90",
+  "originHash" : "a2f9e43dcc75cfa5dbde83d015457a690237715db827777648498b05cd2062f5",
   "pins" : [
     {
       "identity" : "corexlsx",
@@ -11,21 +11,21 @@
       }
     },
     {
+      "identity" : "highlighterswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/smittytone/HighlighterSwift",
+      "state" : {
+        "revision" : "fe7aae9c9b31d3b296fd3d2dd575e1a207bb29e0",
+        "version" : "3.1.0"
+      }
+    },
+    {
       "identity" : "keyboardshortcuts",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sindresorhus/KeyboardShortcuts",
       "state" : {
         "revision" : "ac302e21da5883f4bd0490cbd0cb710b08740500",
         "version" : "1.15.0"
-      }
-    },
-    {
-      "identity" : "splash",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/JohnSundell/Splash",
-      "state" : {
-        "revision" : "7f4df436eb78fe64fe2c32c58006e9949fa28ad8",
-        "version" : "0.16.0"
       }
     },
     {

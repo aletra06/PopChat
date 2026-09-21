@@ -8,4 +8,8 @@ The setting covers messages, reasoning, code, tables, math and the composer. Too
 
 Math uses the bundled SwiftMath renderer. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported inline LaTeX stays visible as source text.
 
+Code highlighting uses HighlighterSwift with bundled highlight.js grammars and Atom One light/dark themes. Fenced blocks use their language tag. Copyable cards accept `<pasteable title="Label" language="python">`; older cards recognize clear Python, Swift, JavaScript, shell and JSON structures. Unmarked prose and `language="text"` cards stay plain. Highlighting preserves source characters and the Copy action. Code cards scroll horizontally to preserve indentation. Render caches include language, appearance and text size; blocks over 64 KiB fall back to monospaced text to bound parsing work.
+
+`SelectableText` measures with a copy of its native text-field cell. Attributed-string `boundingRect` undercounted line height and could clip the final line. Keep the per-width and attributed-string identity cache; `--shot code` checks that the final glyph fits.
+
 Upstream update checks only notify; they do not install anything. Installing an upstream release would replace these additions. To update this version, merge upstream changes into this fork and rebuild.

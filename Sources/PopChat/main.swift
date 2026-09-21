@@ -8,6 +8,11 @@ import SwiftMath
 // dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
 PopChatInstallResourceBundleRedirect()
 
+if CommandLine.arguments.contains("--smoke-highlighting") {
+    _ = NSApplication.shared
+    MainActor.assumeIsolated { runHighlightingChecks() }
+}
+
 if CommandLine.arguments.contains("--smoke-math") {
     _ = NSApplication.shared
     MainActor.assumeIsolated { runMathChecks() }
@@ -68,7 +73,7 @@ if smokePlain || smokeSearch || smokePasteable {
                 print("chunks=\(chunks) reasoningChars=\(reasoningChars)\nfinal=\(text)")
                 if smokePasteable {
                     let blocks = MarkdownRenderer.segments(text).compactMap { segment -> String? in
-                        if case .pasteable(let title, let content) = segment {
+                        if case .pasteable(let title, _, let content) = segment {
                             return "title=\(title ?? "-") chars=\(content.count)"
                         }
                         return nil
@@ -827,13 +832,15 @@ if CommandLine.arguments.contains("--smoke-bundles") {
     let recorder = KeyboardShortcuts.RecorderCocoa(for: .togglePopChat)
     log.check("the hotkey recorder constructs", recorder.shortcutName == .togglePopChat)
     log.check("a math font loads", MTFontManager.manager.latinModernFont(withSize: 12) != nil)
+    let code = MarkdownRenderer.highlightedCode("def greet():\n    return 'hello'", language: "python")
+    log.check("the bundled syntax highlighter loads", highlightingColors(code).count >= 3)
     let redirected = PopChatResourceBundleRedirectCount()
-    log.check("both lookups were redirected into Contents/Resources", redirected >= 2,
+    log.check("all dependency lookups were redirected into Contents/Resources", redirected >= 3,
               "redirected=\(redirected)")
     // And the bundles the dependencies now hold ARE the in-app copies — not the
     // compile-time fallback, which on this machine usually still exists.
     let loaded = Set(Bundle.allBundles.map { $0.bundleURL.standardizedFileURL.path })
-    for name in ["KeyboardShortcuts_KeyboardShortcuts", "SwiftMath_SwiftMath"] {
+    for name in ["KeyboardShortcuts_KeyboardShortcuts", "SwiftMath_SwiftMath", "Highlighter_Highlighter"] {
         let expected = root.appendingPathComponent("Contents/Resources/\(name).bundle").standardizedFileURL.path
         log.check("\(name) resolved to the in-app copy", loaded.contains(expected),
                   "loaded=\(loaded.filter { $0.hasSuffix(".bundle") }.sorted())")
@@ -1036,6 +1043,11 @@ func installBenchmarkConversation(minLength: Int) -> URL {
     - second item
 
     $$\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}$$
+
+    <pasteable title="Python example">
+    def greet(name):
+        return "Hello " + name
+    </pasteable>
 
     """
     var long = ""
@@ -2590,7 +2602,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             )
                 .background(Color(nsColor: .windowBackgroundColor)))
             size = NSSize(width: 268, height: 190)
-        case "transcript", "math":
+        case "transcript", "math", "code":
             // A finished turn with thinking attached, so the reasoning
             // disclosure and the last row's Retry / Edit prompt actions can be
             // eyeballed without driving a live provider. A scratch store keeps
@@ -2610,11 +2622,11 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             ConversationStore.save(Conversation(
                 id: UUID(), title: "Why is the sky blue?", updatedAt: Date(),
                 messages: [
-                    ChatMessage(role: .user, text: which == "math" ? "What is the quadratic formula?" : "Why is the sky blue?"),
+                    ChatMessage(role: .user, text: which == "code" ? "Show me a BFS class in Python." : which == "math" ? "What is the quadratic formula?" : "Why is the sky blue?"),
                     ChatMessage(
                         role: .assistant,
-                        text: which == "math" ? mathExample : "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
-                        reasoning: which == "math" ? nil : "**Considering the physics**\n\nRayleigh scattering goes as 1/λ⁴, so blue scatters far more than red.\n\nThe answer should stay short - this is a quick-chat panel."
+                        text: which == "code" ? highlightingExample : which == "math" ? mathExample : "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
+                        reasoning: which != "transcript" ? nil : "**Considering the physics**\n\nRayleigh scattering goes as 1/λ⁴, so blue scatters far more than red.\n\nThe answer should stay short - this is a quick-chat panel."
                     ),
                 ]
             ))
@@ -2623,7 +2635,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                 state: PanelState(), store: chatStore, providerStore: store,
                 shortcutStore: ShortcutStore(), onClose: {}
             ))
-            size = NSSize(width: 560, height: which == "math" ? 600 : 420)
+            size = NSSize(width: which == "code" ? 680 : 560, height: which == "code" ? 940 : which == "math" ? 600 : 420)
         default:
             content = NSHostingView(rootView: SettingsView(
                 store: store, shortcutStore: ShortcutStore(),
@@ -2647,6 +2659,11 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                     exit(1)
                 }
                 view.cacheDisplay(in: view.bounds, to: rep)
+                if which == "code", !highlightingCardFits(in: view) {
+                    print("FAIL: the code card clips its final line")
+                    restore()
+                    exit(1)
+                }
                 guard let data = rep.representation(using: .png, properties: [:]) else {
                     print("FAIL: could not encode PNG")
                     restore()

@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Splash
 import SwiftMath
 
 /// Native markdown rendering with real text selection. SwiftUI's `.textSelection`
@@ -17,7 +16,7 @@ enum MarkdownRenderer {
         case math(String)
         /// Reusable content the model marked with <pasteable> tags (per the
         /// default system prompt) — rendered as a dedicated copyable card.
-        case pasteable(title: String?, content: String)
+        case pasteable(title: String?, language: String?, content: String)
 
         var isProse: Bool {
             if case .prose = self { return true }
@@ -78,6 +77,7 @@ enum MarkdownRenderer {
                 }
                 result.append(.pasteable(
                     title: title,
+                    language: pasteableAttribute("language", in: trimmed),
                     content: content.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
                 ))
                 i += 1
@@ -151,6 +151,13 @@ enum MarkdownRenderer {
         return trimmed.allSatisfy { "|-: ".contains($0) }
     }
 
+    private static func pasteableAttribute(_ name: String, in tag: String) -> String? {
+        let pattern = "\\b\(name)\\s*=\\s*([\"'])(.*?)\\1"
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else { return nil }
+        return (tag as NSString).substring(with: match.range(at: 2))
+    }
+
     private static func tableCells(_ line: String) -> [String] {
         var cells = line.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
         if cells.first?.isEmpty == true { cells.removeFirst() }
@@ -173,7 +180,7 @@ enum MarkdownRenderer {
         case .prose(let prose): return [attributedProse(prose).string]
         case .quote(let quote): return [attributedProse(quote).string]
         case .code(_, let content): return [content]
-        case .pasteable(_, let content): return [content]
+        case .pasteable(_, _, let content): return [content]
         case .table(let header, let rows): return header.map { tableCell($0).string } + rows.flatMap { $0.map { tableCell($0).string } }
         case .math: return []
         }
@@ -419,61 +426,29 @@ enum MarkdownRenderer {
         ])
     }
 
-    // MARK: - Syntax highlighting (Splash — Xcode dark/light palettes, 4f)
+    // MARK: - Syntax highlighting
 
-    private static let splashDarkTheme = Splash.Theme(
-        font: Splash.Font(size: 11.5),
-        plainTextColor: Theme.nsColor("#DFDFE6"),
-        tokenColors: [
-            .keyword: Theme.nsColor("#FC5FA3"),
-            .type: Theme.nsColor("#5DD8FF"),
-            .call: Theme.nsColor("#67B7A4"),
-            .property: Theme.nsColor("#67B7A4"),
-            .dotAccess: Theme.nsColor("#67B7A4"),
-            .number: Theme.nsColor("#D0BF69"),
-            .comment: Theme.nsColor("#6C7986"),
-            .string: Theme.nsColor("#FC6A5D"),
-            .preprocessing: Theme.nsColor("#FD8F3F"),
-        ],
-        backgroundColor: .clear
-    )
-    private static let splashLightTheme = Splash.Theme(
-        font: Splash.Font(size: 11.5),
-        plainTextColor: Theme.nsColor("#262629"),
-        tokenColors: [
-            .keyword: Theme.nsColor("#AD3DA4"),
-            .type: Theme.nsColor("#0B4F79"),
-            .call: Theme.nsColor("#326D74"),
-            .property: Theme.nsColor("#326D74"),
-            .dotAccess: Theme.nsColor("#326D74"),
-            .number: Theme.nsColor("#1C00CF"),
-            .comment: Theme.nsColor("#5D6C79"),
-            .string: Theme.nsColor("#D12F1B"),
-            .preprocessing: Theme.nsColor("#78492A"),
-        ],
-        backgroundColor: .clear
-    )
-    private static let darkHighlighter = SyntaxHighlighter(format: AttributedStringOutputFormat(theme: splashDarkTheme))
-    private static let lightHighlighter = SyntaxHighlighter(format: AttributedStringOutputFormat(theme: splashLightTheme))
-    private static let codeCache: NSCache<NSString, NSAttributedString> = {
+    static func highlightedCode(_ code: String, language: String? = nil, dark: Bool = true, fontSize: CGFloat = 11.5) -> NSAttributedString {
+        CodeHighlighting.render(code, language: language, dark: dark, fontSize: fontSize)
+    }
+
+    private static let pasteableCache: NSCache<NSString, NSAttributedString> = {
         let cache = NSCache<NSString, NSAttributedString>()
         cache.countLimit = 64
         return cache
     }()
 
-    static func highlightedCode(_ code: String, dark: Bool = true, fontSize: CGFloat = 11.5) -> NSAttributedString {
-        let key = "\(dark ? "d" : "l")|\(fontSize)|\(code)" as NSString
-        if let cached = codeCache.object(forKey: key) { return cached }
-        let highlighter = dark ? darkHighlighter : lightHighlighter
-        let highlighted = NSMutableAttributedString(attributedString: highlighter.highlight(code))
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 4 * fontSize / NSFont.systemFontSize
-        highlighted.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular),
-            .paragraphStyle: paragraph,
-        ], range: NSRange(location: 0, length: highlighted.length))
-        codeCache.setObject(highlighted, forKey: key)
-        return highlighted
+    static func pasteableText(_ content: String, language: String? = nil, dark: Bool = true, fontSize: CGFloat) -> NSAttributedString {
+        let key = "\(dark)|\(fontSize)|\(language ?? "")|\(content)" as NSString
+        if let hit = pasteableCache.object(forKey: key) { return hit }
+        let text: NSAttributedString
+        if let detected = CodeHighlighting.pasteableLanguage(content, hint: language), detected != "plaintext" {
+            text = highlightedCode(content, language: detected, dark: dark, fontSize: fontSize)
+        } else {
+            text = plain(content, size: fontSize)
+        }
+        pasteableCache.setObject(text, forKey: key)
+        return text
     }
 
     // MARK: - Math (SwiftMath)
@@ -577,7 +552,7 @@ struct SelectableText: NSViewRepresentable {
     /// never re-measures the transcript.
     var reveal: TextReveal?
 
-    /// Number of actual CoreText measurements performed (cache misses).
+    /// Number of actual native text measurements performed (cache misses).
     /// Read by the --smoke-typing harness; main-thread only.
     nonisolated(unsafe) static var measurementCount = 0
 
@@ -590,6 +565,7 @@ struct SelectableText: NSViewRepresentable {
         var cachedAttributed: NSAttributedString?
         var cachedWraps: Bool?
         var sizes: [CGFloat: CGSize] = [:]
+        var measurementCell: NSTextFieldCell?
         /// Last hit this view scrolled to — re-renders must not yank the
         /// transcript back to a match the user has already stepped past.
         var lastRevealed: String?
@@ -702,12 +678,20 @@ struct SelectableText: NSViewRepresentable {
             return cached
         }
         Self.measurementCount += 1
-        let bounds = attributed.boundingRect(
-            with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        let width = min(ceil(bounds.width) + 2, maxWidth)
-        let size = CGSize(width: width, height: ceil(bounds.height) + 2)
+        // Measure with the same AppKit cell that draws the text. NSString's
+        // boundingRect can omit the final line when paragraph spacing is used.
+        if coordinator.measurementCell == nil {
+            coordinator.measurementCell = nsView.cell?.copy() as? NSTextFieldCell
+        }
+        guard let cell = coordinator.measurementCell else { return nil }
+        cell.attributedStringValue = attributed
+        cell.wraps = wraps
+        cell.isScrollable = !wraps
+        cell.lineBreakMode = wraps ? .byWordWrapping : .byClipping
+        let measured = cell.cellSize(forBounds: NSRect(
+            x: 0, y: 0, width: maxWidth, height: .greatestFiniteMagnitude
+        ))
+        let size = CGSize(width: min(ceil(measured.width), maxWidth), height: ceil(measured.height))
         coordinator.sizes[maxWidth] = size
         return size
     }
@@ -761,8 +745,8 @@ struct AssistantMessageView: View {
                     TableBlockView(header: header, rows: rows, cellFinds: finds[index])
                 case .math(let latex):
                     MathBlockView(latex: latex)
-                case .pasteable(let title, let content):
-                    PasteableBlockView(title: title, content: content, find: segmentFind)
+                case .pasteable(let title, let language, let content):
+                    PasteableBlockView(title: title, content: content, language: language, find: segmentFind)
                 }
             }
             if showCaret, !(segments.last?.isProse ?? false) {
@@ -860,7 +844,7 @@ struct CodeBlockView: View {
             .background(Theme.recessedHeader(dark: dark))
             ScrollView(.horizontal, showsIndicators: false) {
                 SelectableText(
-                    attributed: MarkdownRenderer.highlightedCode(content, dark: dark, fontSize: fontSize),
+                    attributed: MarkdownRenderer.highlightedCode(content, language: language, dark: dark, fontSize: fontSize),
                     wraps: false, find: find, reveal: reveal
                 )
                 .padding(10)
@@ -951,6 +935,7 @@ struct PasteableBlockView: View {
     @Environment(\.chatTextSize) private var fontSize
     let title: String?
     let content: String
+    var language: String?
     var find: TextFind?
 
     @State private var copied = false
@@ -961,6 +946,8 @@ struct PasteableBlockView: View {
 
     var body: some View {
         let dark = scheme == .dark
+        let detectedLanguage = CodeHighlighting.pasteableLanguage(content, hint: language)
+        let isCode = detectedLanguage != nil && detectedLanguage != "plaintext"
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: "doc.on.clipboard")
@@ -994,9 +981,20 @@ struct PasteableBlockView: View {
             .padding(.vertical, 6)
             Divider()
                 .overlay(Theme.liftedDivider(dark: dark))
-            SelectableText(attributed: MarkdownRenderer.plain(content, size: fontSize), find: find)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+            if isCode {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    SelectableText(
+                        attributed: MarkdownRenderer.pasteableText(content, language: detectedLanguage, dark: dark, fontSize: fontSize),
+                        wraps: false, find: find
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+            } else {
+                SelectableText(attributed: MarkdownRenderer.pasteableText(content, language: language, dark: dark, fontSize: fontSize), find: find)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
         }
         .background(Theme.liftedFill(dark: dark))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

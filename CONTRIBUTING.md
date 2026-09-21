@@ -25,6 +25,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 .build/debug/PopChat --smoke-file <path>                    # attachment extraction
 .build/debug/PopChat --smoke-font-size                      # live text sizing, shortcuts, draft and IME preservation
 .build/debug/PopChat --smoke-math                           # LaTeX delimiters, literal code, Unicode and streaming
+.build/debug/PopChat --smoke-highlighting                   # code cards, language tags, source preservation and themes
 .build/debug/PopChat --smoke-typing                         # composer latency budget
 .build/debug/PopChat --smoke-scroll                         # transcript scroll perf
 .build/debug/PopChat --smoke-find                           # find-in-chat behavior
@@ -33,6 +34,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 `--smoke-persist`, `--smoke-history`, `--smoke-minsize`, `--smoke-pasteable`, `--smoke-providers`, `--smoke-accent`, `--smoke-typewriter`, `--chatgpt-login` and `--smoke-chatgpt` cover the rest. `--check-codex-app-server` checks the installed Codex, ChatGPT login and available model catalog without starting a model turn; `--smoke-codex-refresh-coalescing` verifies overlapping checks share one process. `--shot <settings|general|switcher|transcript|thinking|accent> <path> [--dark|--light]` renders a view to PNG in-process (`transcript` forces a solid panel — glass has no backdrop to composite against offscreen — and seeds itself through `ConversationStore.save` so the shot exercises the real restore path).
 
 Use `--shot math <path> --dark` or `--light` to inspect the quadratic-formula answer in a real restored chat.
+Use `--shot code <path> --dark` or `--light` for a restored Python card alongside an ordinary copyable note.
 
 The check-list harnesses share `CheckLog` (`check` / `finish`) and the GUI ones share `composerTextView(in:)`, `sendKey(...)` and `sendArrow(...)` - add to those rather than re-declaring a local copy.
 

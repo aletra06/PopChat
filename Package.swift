@@ -9,13 +9,13 @@ let package = Package(
         // compile with Command Line Tools alone (the previews plugin ships only in Xcode).
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", exact: "1.15.0"),
         .package(url: "https://github.com/CoreOffice/CoreXLSX", from: "0.14.0"),
-        .package(url: "https://github.com/JohnSundell/Splash", from: "0.16.0"),
+        .package(url: "https://github.com/smittytone/HighlighterSwift", from: "3.1.0"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.0"),
     ],
     targets: [
         .executableTarget(
             name: "PopChat",
-            dependencies: ["KeyboardShortcuts", "CoreXLSX", "Splash", "SwiftMath", "PopChatBundleShim"],
+            dependencies: ["KeyboardShortcuts", "CoreXLSX", .product(name: "Highlighter", package: "HighlighterSwift"), "SwiftMath", "PopChatBundleShim"],
             path: "Sources/PopChat"
         ),
         // Objective-C: the Bundle.module redirect for the assembled .app (see the .m).

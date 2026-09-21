@@ -186,6 +186,9 @@ final class ChatStore: ObservableObject {
     Pasteable rules:
     - The tags go on their own lines, with a short descriptive title.
     - Inside the tags, put only the content to copy — no commentary.
+    - For code or configuration, add a language attribute, for example \
+    <pasteable title="BFS search class" language="python">. Put raw code inside, without markdown fences.
+    - For prose, emails and prompts, omit the language attribute. Use language="text" when literal plain text is needed.
     - Keep explanations outside the block, in normal prose.
     - Use pasteable blocks only for content meant to be copied; use normal markdown code \
     fences for illustrative code.
