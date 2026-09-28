@@ -16,6 +16,8 @@ Sending a prompt or hiding the panel dismisses the default-location action for t
 
 Math uses the bundled SwiftMath renderer. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported inline LaTeX stays visible as source text.
 
+SwiftMath is vendored at `Vendor/SwiftMath` to support `\boxed{...}` in its native parser and layout engine. Box borders reserve space around their contents, including inside fractions and roots or next to scripts. See `Vendor/SwiftMath/README.popchat.md` before updating the math dependency for the upstream revision and patch details.
+
 Code highlighting uses HighlighterSwift with bundled highlight.js grammars and Atom One light/dark themes. Fenced blocks use their language tag. Copyable cards accept `<pasteable title="Label" language="python">`; older cards recognize clear Python, Swift, JavaScript, shell and JSON structures. Unmarked prose and `language="text"` cards stay plain. Highlighting preserves source characters and the Copy action. Code cards scroll horizontally to preserve indentation. Render caches include language, appearance and text size; blocks over 64 KiB fall back to monospaced text to bound parsing work.
 
 `SelectableText` measures with a copy of its native text-field cell. Attributed-string `boundingRect` undercounted line height and could clip the final line. Keep the per-width and attributed-string identity cache; `--shot code` checks that the final glyph fits.

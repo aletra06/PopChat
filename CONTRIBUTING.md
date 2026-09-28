@@ -35,6 +35,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 `--smoke-persist`, `--smoke-history`, `--smoke-minsize`, `--smoke-pasteable`, `--smoke-providers`, `--smoke-accent`, `--smoke-typewriter`, `--chatgpt-login` and `--smoke-chatgpt` cover the rest. `--check-codex-app-server` checks the installed Codex, ChatGPT login and available model catalog without starting a model turn; `--smoke-codex-refresh-coalescing` verifies overlapping checks share one process. `--shot <settings|general|switcher|transcript|thinking|accent> <path> [--dark|--light]` renders a view to PNG in-process (`transcript` forces a solid panel — glass has no backdrop to composite against offscreen — and seeds itself through `ConversationStore.save` so the shot exercises the real restore path).
 
 Use `--shot math <path> --dark` or `--light` to inspect the quadratic-formula answer in a real restored chat.
+Use `--shot boxed <path> --dark` or `--light` for boxed answers, inline math, nested boxes, fractions and scripts. `--smoke-math` covers the boxed renderer without requiring XCTest or full Xcode.
 Use `--shot code <path> --dark` or `--light` for a restored Python card alongside an ordinary copyable note.
 Use `--shot composer <path> --font-size 32 --dark` to inspect input alignment. Add `--draft-lines 3`, `--streaming`, or `--expanded` to check multiline input, the stop button, and the expanded editor. Check the smallest (11 pt), default (16 pt), and largest (32 pt) sizes.
 Add `--accent '#BF5AF2'` to check composer controls with a preset or custom theme color.

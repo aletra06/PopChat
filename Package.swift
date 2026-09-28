@@ -10,7 +10,7 @@ let package = Package(
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", exact: "1.15.0"),
         .package(url: "https://github.com/CoreOffice/CoreXLSX", from: "0.14.0"),
         .package(url: "https://github.com/smittytone/HighlighterSwift", from: "3.1.0"),
-        .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.0"),
+        .package(path: "Vendor/SwiftMath"),
     ],
     targets: [
         .executableTarget(
