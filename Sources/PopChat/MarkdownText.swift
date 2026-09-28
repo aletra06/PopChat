@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import SwiftMath
 
 /// Native markdown rendering with real text selection. SwiftUI's `.textSelection`
 /// is per-Text-view (selection can't cross paragraphs), so assistant messages are
@@ -159,7 +158,14 @@ enum MarkdownRenderer {
     }
 
     private static func tableCells(_ line: String) -> [String] {
-        var cells = line.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        // A norm, conditional probability or array inside math may contain |.
+        // Protect those expressions before splitting Markdown's cell separators.
+        let (source, parts) = extractInlineMath(line)
+        var cells = source.components(separatedBy: "|").map { cell in
+            parts.reduce(cell.trimmingCharacters(in: .whitespaces)) {
+                $0.replacingOccurrences(of: $1.token, with: $1.original)
+            }
+        }
         if cells.first?.isEmpty == true { cells.removeFirst() }
         if cells.last?.isEmpty == true { cells.removeLast() }
         return cells
@@ -451,60 +457,43 @@ enum MarkdownRenderer {
         return text
     }
 
-    // MARK: - Math (SwiftMath)
-
-    private static let mathCache: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 128
-        return cache
-    }()
+    // MARK: - Math
 
     static func mathImage(_ latex: String, fontSize: CGFloat, display: Bool) -> NSImage? {
-        let key = "\(appearanceKey)|\(display ? "d" : "t")|\(fontSize)|\(latex)" as NSString
-        if let cached = mathCache.object(forKey: key) { return cached }
-        let renderer = MTMathImage(
-            latex: latex,
-            fontSize: fontSize,
-            textColor: .labelColor,
-            labelMode: display ? .display : .text
-        )
-        let (error, image) = renderer.asImage()
-        guard error == nil, let image, image.size.width > 0 else { return nil }
-        mathCache.setObject(image, forKey: key)
-        return image
+        MathRenderer.render(latex, fontSize: fontSize, display: display)?.image
     }
 
     private struct InlineMath {
         let token: String
         let latex: String
         let original: String
+        let display: Bool
     }
 
     // Consume code spans and escaped delimiters first, before matching math.
     // Dollar math keeps its conservative heuristic so prices remain plain text.
     private static let inlineMathPattern = try! NSRegularExpression(
-        pattern: #"(`+)[\s\S]*?\1(?!`)|\\[\\$]|\\\(([^\n]*?)\\\)|(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)"#
+        pattern: #"(`+)[\s\S]*?\1(?!`)|\\[\\$]|\\\[([\s\S]*?)\\\]|(?<!\$)\$\$([\s\S]*?)\$\$(?!\$)|\\\(([^\n]*?)\\\)|(?<!\$)\$([^\s$](?:[^$\n]*[^\s$])?)\$(?!\$)"#
     )
 
     private static func extractInlineMath(_ markdown: String) -> (String, [InlineMath]) {
-        guard markdown.contains("$") || markdown.contains(#"\("#) else { return (markdown, []) }
+        guard markdown.contains("$") || markdown.contains(#"\("#) || markdown.contains(#"\["#) else { return (markdown, []) }
         let text = markdown as NSString
         var parts: [InlineMath] = []
         let result = NSMutableString(string: markdown)
         let prefix = "⟦MATH\(UUID().uuidString)"
         let matches = inlineMathPattern.matches(in: markdown, range: NSRange(location: 0, length: text.length))
         for match in matches.reversed() {
-            let explicit = match.range(at: 2).location != NSNotFound
-            let range = match.range(at: explicit ? 2 : 3)
-            guard range.location != NSNotFound else { continue }
+            guard let group = (2...5).first(where: { match.range(at: $0).location != NSNotFound }) else { continue }
+            let range = match.range(at: group)
             let content = text.substring(with: range)
-            if !explicit {
+            if group == 5 {
                 let mathy = content.rangeOfCharacter(from: CharacterSet(charactersIn: "\\^_{}=")) != nil
                     || content.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
                 guard mathy else { continue }
             }
             let token = "\(prefix)\(parts.count)⟧"
-            parts.append(InlineMath(token: token, latex: content, original: text.substring(with: match.range)))
+            parts.append(InlineMath(token: token, latex: content, original: text.substring(with: match.range), display: group <= 3))
             // Regex ranges use UTF-16, including when emoji precede an equation.
             result.replaceCharacters(in: match.range, with: token)
         }
@@ -515,13 +504,13 @@ enum MarkdownRenderer {
         for part in parts {
             let range = (result.string as NSString).range(of: part.token)
             guard range.location != NSNotFound else { continue }
-            let font = NSFont.systemFont(ofSize: fontSize)
-            if let image = mathImage(part.latex, fontSize: fontSize, display: false) {
+            if let rendering = MathRenderer.render(part.latex, fontSize: fontSize, display: part.display) {
+                let image = rendering.image
                 let attachment = NSTextAttachment()
                 attachment.image = image
                 attachment.bounds = CGRect(
                     x: 0,
-                    y: (font.capHeight - image.size.height) / 2,
+                    y: -rendering.descent,
                     width: image.size.width,
                     height: image.size.height
                 )
@@ -1012,9 +1001,14 @@ struct MathBlockView: View {
 
     var body: some View {
         if let image = MarkdownRenderer.mathImage(latex, fontSize: fontSize * 1.25, display: true) {
-            Image(nsImage: image)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 8)
+            GeometryReader { geometry in
+                ScrollView(.horizontal) {
+                    Image(nsImage: image)
+                        .frame(minWidth: geometry.size.width, alignment: .center)
+                        .padding(.vertical, 8)
+                }
+            }
+            .frame(height: image.size.height + 16)
         } else {
             // Explicit fallback: show the raw TeX rather than silently dropping it.
             SelectableText(attributed: MarkdownRenderer.plain("$$\(latex)$$", monospaced: true, size: fontSize))

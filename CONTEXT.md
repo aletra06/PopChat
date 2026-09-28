@@ -14,9 +14,9 @@ Window placement uses an explicit default, initially migrated from the old remem
 
 Sending a prompt or hiding the panel dismisses the default-location action for the current position. Reopening keeps it dismissed; only dragging again makes it available at a new position.
 
-Math uses the bundled SwiftMath renderer. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported inline LaTeX stays visible as source text.
+Math uses bundled MathJax in JavaScriptCore, with AppKit drawing its SVG output. Rendering works offline without a web view. Display equations accept `$$...$$` and `\[...\]`; inline equations accept `$...$` and `\(...\)`, including in tables. Code spans and fenced code stay literal. Unsupported LaTeX stays visible as source text. Long display equations scroll horizontally.
 
-SwiftMath is vendored at `Vendor/SwiftMath` to support `\boxed{...}` in its native parser and layout engine. Box borders reserve space around their contents, including inside fractions and roots or next to scripts. See `Vendor/SwiftMath/README.popchat.md` before updating the math dependency for the upstream revision and patch details.
+The generated renderer and font outlines live in `Sources/PopChat/Resources/MathJax`. Normal Swift builds use these checked-in resources. Read `Tools/MathRenderer/README.md` before changing the math packages or rebuilding the JavaScript bundle. `--smoke-math` checks common model output, native image pixels, source fallback and streaming prefixes.
 
 Code highlighting uses HighlighterSwift with bundled highlight.js grammars and Atom One light/dark themes. Fenced blocks use their language tag. Copyable cards accept `<pasteable title="Label" language="python">`; older cards recognize clear Python, Swift, JavaScript, shell and JSON structures. Unmarked prose and `language="text"` cards stay plain. Highlighting preserves source characters and the Copy action. Code cards scroll horizontally to preserve indentation. Render caches include language, appearance and text size; blocks over 64 KiB fall back to monospaced text to bound parsing work.
 

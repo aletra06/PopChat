@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 import PopChatBundleShim
 import KeyboardShortcuts
-import SwiftMath
 
 // First, before any dependency can touch its resources: inside the .app, the SPM
 // dependencies' Bundle.module would otherwise trap (see PopChatBundleShim.m).
@@ -834,11 +833,10 @@ if CommandLine.arguments.contains("--smoke-bundles") {
     log.check("runs from an assembled .app", root.pathExtension == "app",
               "Bundle.main is \(root.path) — run dist/PopChat.app/Contents/MacOS/PopChat --smoke-bundles")
     _ = NSApplication.shared
-    // The two lookups that crashed 0.1.2: the hotkey recorder (localized strings)
-    // and a LaTeX font.
+    // Exercise all resources from inside the assembled app.
     let recorder = KeyboardShortcuts.RecorderCocoa(for: .togglePopChat)
     log.check("the hotkey recorder constructs", recorder.shortcutName == .togglePopChat)
-    log.check("a math font loads", MTFontManager.manager.latinModernFont(withSize: 12) != nil)
+    log.check("bundled math engine and font outlines load", MarkdownRenderer.mathImage(#"\boxed{\operatorname{sgn}(x)}"#, fontSize: 18, display: true) != nil)
     let code = MarkdownRenderer.highlightedCode("def greet():\n    return 'hello'", language: "python")
     log.check("the bundled syntax highlighter loads", highlightingColors(code).count >= 3)
     let redirected = PopChatResourceBundleRedirectCount()
@@ -847,7 +845,7 @@ if CommandLine.arguments.contains("--smoke-bundles") {
     // And the bundles the dependencies now hold ARE the in-app copies — not the
     // compile-time fallback, which on this machine usually still exists.
     let loaded = Set(Bundle.allBundles.map { $0.bundleURL.standardizedFileURL.path })
-    for name in ["KeyboardShortcuts_KeyboardShortcuts", "SwiftMath_SwiftMath", "Highlighter_Highlighter"] {
+    for name in ["KeyboardShortcuts_KeyboardShortcuts", "PopChat_PopChat", "Highlighter_Highlighter"] {
         let expected = root.appendingPathComponent("Contents/Resources/\(name).bundle").standardizedFileURL.path
         log.check("\(name) resolved to the in-app copy", loaded.contains(expected),
                   "loaded=\(loaded.filter { $0.hasSuffix(".bundle") }.sorted())")
@@ -2637,7 +2635,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             )
                 .background(Color(nsColor: .windowBackgroundColor)))
             size = NSSize(width: 268, height: 190)
-        case "transcript", "math", "boxed", "code":
+        case "transcript", "math", "boxed", "math-compat", "math-gallery", "code":
             // A finished turn with thinking attached, so the reasoning
             // disclosure and the last row's Retry / Edit prompt actions can be
             // eyeballed without driving a live provider. A scratch store keeps
@@ -2657,10 +2655,10 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
             ConversationStore.save(Conversation(
                 id: UUID(), title: "Why is the sky blue?", updatedAt: Date(),
                 messages: [
-                    ChatMessage(role: .user, text: which == "code" ? "Show me a BFS class in Python." : which == "boxed" ? "Find the centre and radius." : which == "math" ? "What is the quadratic formula?" : "Why is the sky blue?"),
+                    ChatMessage(role: .user, text: ["math-compat", "math-gallery"].contains(which) ? "Show common mathematical notation." : which == "code" ? "Show me a BFS class in Python." : which == "boxed" ? "Find the centre and radius." : which == "math" ? "What is the quadratic formula?" : "Why is the sky blue?"),
                     ChatMessage(
                         role: .assistant,
-                        text: which == "code" ? highlightingExample : which == "boxed" ? boxedMathExample : which == "math" ? mathExample : "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
+                        text: which == "code" ? highlightingExample : which == "math-gallery" ? mathGalleryExample : which == "math-compat" ? mathCompatibilityExample : which == "boxed" ? boxedMathExample : which == "math" ? mathExample : "Shorter wavelengths scatter more in air, so blue light reaches your eyes from every direction.",
                         reasoning: which != "transcript" ? nil : "**Considering the physics**\n\nRayleigh scattering goes as 1/λ⁴, so blue scatters far more than red.\n\nThe answer should stay short - this is a quick-chat panel."
                     ),
                 ]
@@ -2670,7 +2668,7 @@ if let shotIndex = CommandLine.arguments.firstIndex(of: "--shot"),
                 state: PanelState(), store: chatStore, providerStore: store,
                 shortcutStore: ShortcutStore(), onClose: {}
             ))
-            size = NSSize(width: which == "code" ? 680 : 560, height: which == "code" ? 940 : which == "math" || which == "boxed" ? 600 : 420)
+            size = NSSize(width: which == "code" ? 680 : 560, height: which == "math-gallery" ? 1100 : which == "code" ? 940 : ["math", "boxed", "math-compat"].contains(which) ? 600 : 420)
         default:
             content = NSHostingView(rootView: SettingsView(
                 store: store, shortcutStore: ShortcutStore(),

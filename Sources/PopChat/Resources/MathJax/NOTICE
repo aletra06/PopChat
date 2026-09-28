@@ -1,0 +1,14 @@
+PopChat bundles MathJax 4.1.3 and the MathJax TeX and mhchem font packages 4.1.3.
+
+MathJax code: Copyright (c) 2017-2026 The MathJax Consortium.
+Licensed under the Apache License, Version 2.0. See LICENSE.mathjax.
+
+MathJax TeX font outlines: Copyright (c) 2022 MathJax, Inc. (www.mathjax.org).
+MathJax mhchem font outlines: Copyright (c) 2024 MathJax, Inc. (www.mathjax.org).
+Licensed under the SIL Open Font License, Version 1.1. See LICENSE.fonts.
+JavaScript code in the font packages is licensed under Apache-2.0.
+
+mhchemparser 4.2.1: Copyright (c) 2015-2023 Martin Hensel.
+Licensed under the Apache License, Version 2.0. See LICENSE.mhchemparser.
+
+PopChat's renderer.mjs adapts MathJax SVG output for native AppKit rendering.

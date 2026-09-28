@@ -3,6 +3,7 @@
 dist/
 .DS_Store
 .claude/
+Tools/MathRenderer/node_modules/
 
 # Internal working material — kept locally, never published.
 design/

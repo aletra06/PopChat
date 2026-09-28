@@ -1,5 +1,4 @@
 import AppKit
-import SwiftMath
 
 let mathExample = #"""
 For a quadratic equation
@@ -31,6 +30,12 @@ Inline: \(\boxed{x^2}\). Nested fractions and scripts:
 $$\frac{\boxed{1}}{\sqrt{\boxed{2}}}+\boxed{\frac{x+1}{\boxed{y}}}_{n}^{2}.$$
 """#
 
+let mathCompatibilityExample = #"""
+For all real \(x\), use the second form:
+
+$$\arctan(x)=\operatorname{sgn}(x)\arccos\left(\frac{1}{\sqrt{1+x^2}}\right).$$
+"""#
+
 @MainActor
 func runMathChecks() -> Never {
     var log = CheckLog()
@@ -48,6 +53,9 @@ func runMathChecks() -> Never {
         return found
     }
     let display = equations(mathExample)
+    log.check("named operator from arctangent screenshot renders", MarkdownRenderer.mathImage(
+        #"\arctan(x)=\operatorname{sgn}(x)\arccos\left(\frac{1}{\sqrt{1+x^2}}\right)."#,
+        fontSize: 22.5, display: true) != nil)
     log.check("quadratic answer contains both display equations", display.count == 2)
     log.check("fractions, roots and inequality render", display.allSatisfy {
         MarkdownRenderer.mathImage($0, fontSize: 22.5, display: true) != nil
@@ -67,6 +75,14 @@ func runMathChecks() -> Never {
     log.check("ordinary parentheses and brackets stay text", attachments(MarkdownRenderer.attributedProse("(hello) and [world]")).isEmpty)
     log.check("unsupported commands preserve original source", MarkdownRenderer.attributedProse(#"Keep \(\notARealCommand{x}\) visible."#).string.contains(#"\(\notARealCommand{x}\)"#))
     log.check("table math renders", attachments(MarkdownRenderer.tableCell(#"\(x^2\) and $y$"#)).count == 2)
+    log.check("display delimiters embedded in prose render", attachments(MarkdownRenderer.attributedProse(#"Answer: $$\dfrac{1}{2}$$ and \[\boxed{2}\]."#)).count == 2)
+    let mathTable = MarkdownRenderer.segments("| Quantity | Value |\n| --- | --- |\n| Conditional | $P(A|B)$ |\n| Norm | \\(\\left|x\\right|\\) |")
+    if case .table(let header, let rows) = mathTable.first {
+        log.check("math pipes do not split table cells", header.count == 2 && rows.count == 2 && rows.allSatisfy { $0.count == 2 }
+            && rows.allSatisfy { attachments(MarkdownRenderer.tableCell($0[1])).count == 1 })
+    } else {
+        log.check("math pipes do not split table cells", false)
+    }
     log.check("boxed screenshot equations and nested boxes render", equations(boxedMathExample).allSatisfy {
         MarkdownRenderer.mathImage($0, fontSize: 22.5, display: true) != nil
     })
@@ -83,12 +99,7 @@ func runMathChecks() -> Never {
     let largeBox = MarkdownRenderer.mathImage(#"\boxed{(1,2)}"#, fontSize: 36, display: true)
     log.check("box and contents scale with text size", abs((largeBox?.size.width ?? 0) - 2 * (box?.size.width ?? 0)) < 0.01
         && abs((largeBox?.size.height ?? 0) - 2 * (box?.size.height ?? 0)) < 0.01)
-    let boxedSource = #"\boxed{\frac{1}{\boxed{x}}}^{2}_{n}"#
-    let parsedBox = MTMathListBuilder.build(fromString: boxedSource)
-    log.check("copy and finalization preserve boxed contents and scripts", parsedBox != nil
-        && MTMathListBuilder.mathListToString(MTMathList(atoms: parsedBox?.atoms.map { $0.copy() } ?? [])) == boxedSource
-        && MTMathListBuilder.mathListToString(parsedBox?.finalized) == boxedSource)
-    log.check("empty and colored boxes render", [#"\boxed{}"#, #"\boxed{\color{FF0000}{x}}"#].allSatisfy {
+    log.check("empty and colored boxes render", [#"\boxed{}"#, #"\boxed{\color{red}{x}}"#].allSatisfy {
         MarkdownRenderer.mathImage($0, fontSize: 18, display: true) != nil
     })
     log.check("malformed boxed input preserves its source", [#"\boxed{x"#, #"\boxed{\unknown{x}}"#, #"\boxedOther{x}"#].allSatisfy {
@@ -100,7 +111,8 @@ func runMathChecks() -> Never {
     let small = attachments(MarkdownRenderer.attributedProse(#"\(x^2\)"#, fontSize: 12)).first
     let large = attachments(MarkdownRenderer.attributedProse(#"\(x^2\)"#, fontSize: 24)).first
     log.check("inline math follows text size", (large?.bounds.height ?? 0) > (small?.bounds.height ?? 0))
-    for example in [mathExample, boxedMathExample] {
+    checkMathCompatibility(&log)
+    for example in [mathExample, boxedMathExample, mathCompatibilityExample] {
         for length in 0...example.count {
             for segment in MarkdownRenderer.segments(String(example.prefix(length))) {
                 switch segment {

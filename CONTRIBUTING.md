@@ -25,7 +25,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 .build/debug/PopChat --smoke-file <path>                    # attachment extraction
 .build/debug/PopChat --smoke-font-size                      # live text sizing, shortcuts, draft and IME preservation
 .build/debug/PopChat --smoke-placement                      # default position, drag guides, snapping and display changes
-.build/debug/PopChat --smoke-math                           # LaTeX delimiters, literal code, Unicode and streaming
+.build/debug/PopChat --smoke-math                           # LaTeX compatibility, native pixels, delimiters and streaming
 .build/debug/PopChat --smoke-highlighting                   # code cards, language tags, source preservation and themes
 .build/debug/PopChat --smoke-typing                         # composer latency budget
 .build/debug/PopChat --smoke-scroll                         # transcript scroll perf
@@ -36,6 +36,7 @@ POPCHAT_API_KEY=… .build/debug/PopChat --smoke-search       # tool-calling loo
 
 Use `--shot math <path> --dark` or `--light` to inspect the quadratic-formula answer in a real restored chat.
 Use `--shot boxed <path> --dark` or `--light` for boxed answers, inline math, nested boxes, fractions and scripts. `--smoke-math` covers the boxed renderer without requiring XCTest or full Xcode.
+Use `--shot math-compat <path> --dark` or `--light` for the reported inverse-trigonometry formula, or `--shot math-gallery <path> --dark` or `--light` for matrices, equation tags, cases, chemistry and inline baselines. The math smoke check rasterizes 65 representative expressions through AppKit. To update the bundled renderer, follow `Tools/MathRenderer/README.md`; ordinary app builds do not need Node.js.
 Use `--shot code <path> --dark` or `--light` for a restored Python card alongside an ordinary copyable note.
 Use `--shot composer <path> --font-size 32 --dark` to inspect input alignment. Add `--draft-lines 3`, `--streaming`, or `--expanded` to check multiline input, the stop button, and the expanded editor. Check the smallest (11 pt), default (16 pt), and largest (32 pt) sizes.
 Add `--accent '#BF5AF2'` to check composer controls with a preset or custom theme color.

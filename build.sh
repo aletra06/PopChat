@@ -48,18 +48,11 @@ cp "$BIN" "$APP/Contents/MacOS/PopChat"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # CFBundleIconFile
 
-# SPM dependency resource bundles (KeyboardShortcuts localizations, SwiftMath's math
-# fonts) must ship inside the app for Bundle.module lookup to succeed — without them
-# SwiftMath traps the first time a message contains LaTeX.
-# -L is load-bearing: .build/<config> is a symlink to .build/<triple>/<config>, and
-# plain find will not descend into it, so this silently copied nothing.
-find -L "$SCRATCH/$CONFIG" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$APP/Contents/Resources/" \;
-
-# Counted, not "is Resources empty" — the icon lives there too and would mask a miss.
-if [ "$(find "$APP/Contents/Resources" -maxdepth 1 -name "*.bundle" | wc -l)" -eq 0 ]; then
-    echo "error: no resource bundles were copied — LaTeX rendering would crash at runtime" >&2
-    exit 1
-fi
+# Copy the current resource bundles explicitly. Old dependencies can leave stale
+# bundles in the build directory after removal from Package.swift.
+for BUNDLE in PopChat_PopChat KeyboardShortcuts_KeyboardShortcuts Highlighter_Highlighter; do
+    cp -R "$SCRATCH/$CONFIG/$BUNDLE.bundle" "$APP/Contents/Resources/"
+done
 
 if [ "$SIGN_ID" = "-" ]; then
     codesign --force --sign - "$APP"
