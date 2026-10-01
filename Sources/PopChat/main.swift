@@ -534,6 +534,7 @@ if let flag = CommandLine.arguments.firstIndex(of: "--smoke-codex-app-server-bac
 // ChatGPT-subscription auth + streaming checks (no UI):
 //   .build/debug/PopChat --chatgpt-login    interactive: opens the browser OAuth flow
 //   .build/debug/PopChat --smoke-chatgpt    requires a prior login; one streaming turn
+//   POPCHAT_MODEL=... .build/debug/PopChat --smoke-codex-app-server
 if CommandLine.arguments.contains("--chatgpt-login") {
     Task { @MainActor in
         do {
@@ -547,26 +548,30 @@ if CommandLine.arguments.contains("--chatgpt-login") {
     }
     RunLoop.main.run()
 }
-if CommandLine.arguments.contains("--smoke-chatgpt") {
+if CommandLine.arguments.contains("--smoke-chatgpt")
+    || CommandLine.arguments.contains("--smoke-codex-app-server") {
     Task {
-        guard ChatGPTAuth.isSignedIn else {
+        let useCodex = CommandLine.arguments.contains("--smoke-codex-app-server")
+        guard useCodex || ChatGPTAuth.isSignedIn else {
             print("SKIP: not signed in — run --chatgpt-login first")
             exit(1)
         }
         let model = ProcessInfo.processInfo.environment["POPCHAT_MODEL"] ?? ChatGPTAuth.defaultModel
-        let config = ProviderConfig(baseURL: "", apiKey: "", model: model, kind: .chatGPT)
+        let config = ProviderConfig(baseURL: "", apiKey: "", model: model,
+                                    kind: useCodex ? .codexAppServer : .chatGPT)
         let useSearch = CommandLine.arguments.contains("--with-search")
-        print("smoke-chatgpt: model=\(model) account=\(ChatGPTAuth.accountEmail ?? "?") search=\(useSearch)")
+        print("smoke-chatgpt: model=\(model) transport=\(config.kind.rawValue) search=\(useSearch)")
         let prompt = useSearch
             ? "What is the latest stable release version of the Zed editor? Use web_search to check — do not answer from memory. Reply with just the version number and the source URL."
             : "Reply with exactly: PopChat ChatGPT OK"
         var chunks = 0
         let history = [OpenAIChatClient.WireMessage(role: "user", content: .text(prompt))]
-        for await event in CodexResponsesClient.run(
-            history: history,
-            config: config,
-            webAccess: useSearch ? .localTools(.duckduckgo) : nil
-        ) {
+        let stream = useCodex
+            ? CodexAppServerClient.run(history: history, config: config,
+                                       webSearch: useSearch, inactivityTimeout: 120)
+            : CodexResponsesClient.run(history: history, config: config,
+                                       webAccess: useSearch ? .localTools(.duckduckgo) : nil)
+        for await event in stream {
             switch event {
             case .partial:
                 chunks += 1

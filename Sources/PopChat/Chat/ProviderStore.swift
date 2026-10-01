@@ -731,7 +731,8 @@ final class ProviderStore: ObservableObject {
         case .success(let inspection):
             modelFetchErrors[provider.id] = nil
             if includeModels {
-                knownModels[provider.id] = inspection.models.sorted()
+                // Codex orders its catalog with current models first.
+                knownModels[provider.id] = inspection.models
                 knownModelEfforts[provider.id] = inspection.supportedEfforts
                 defaultModelEfforts[provider.id] = inspection.defaultEfforts
                 // The discovered default belongs on the PROVIDER, not in

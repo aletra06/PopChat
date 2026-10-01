@@ -897,7 +897,7 @@ struct SettingsView: View {
         editorField("Codex path") {
             HStack(spacing: 6) {
                 TextField("Auto-detect", text: $codexExecutablePath)
-                    .help("Leave empty to auto-detect (PopChat checks common install locations, then asks your login shell), or enter the path `which codex` prints in Terminal.")
+                    .help("Leave empty to use Codex from the ChatGPT or Codex desktop app, then common CLI install locations and your login shell. Enter a path to choose a specific executable.")
                     .onChange(of: codexExecutablePath) { _, _ in
                         // Not just a status reset: this also bumps the generation so a
                         // check already running against the OLD path cannot publish

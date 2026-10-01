@@ -54,7 +54,7 @@ There is no Xcode project — it's plain SwiftPM (`Package.swift`) plus `build.s
 Open Settings from the menu bar icon or **⌘,** inside the panel.
 
 - **Providers** — pick a preset or add a custom OpenAI-compatible endpoint, paste an API key, and fetch the model list. **Add Provider…** also offers a *Free tiers* section (Groq, Google Gemini, Mistral, Cerebras, NVIDIA NIM, Cohere, Hugging Face) that fills in the right base URL and links where to get a key. ChatGPT-subscription access has two separate presets:
-    - *OpenAI (Codex app-server)*: preferred. You must install and update Codex yourself, run `codex login` in Terminal, and ensure PopChat can find the `codex` executable (an explicit path field is available). PopChat only starts the local app-server; it does not install Codex or own/copy its login.
+    - *OpenAI (Codex app-server)*: preferred. PopChat detects Codex from an installed ChatGPT or Codex desktop app before checking common CLI locations. Keep that app or CLI updated to get its current model catalog. Sign in through Codex; PopChat only starts the local app-server and does not install Codex or copy its login. An explicit Codex path overrides auto-detection, so clear an old path in Settings to use the desktop app. Models and reasoning options come from the installed Codex, with current models listed first.
     - *OpenAI subscription (unofficial)*: the existing direct OAuth flow. It opens your browser and needs port 1455 during sign-in. Because it calls a backend not documented for third-party apps, it may break and may carry account or terms risk.
 - **Web Search** — choose the engine; Tavily/Brave need keys, DuckDuckGo doesn't.
 - **Commands** — edit the system prompt and define slash commands.

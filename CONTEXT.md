@@ -23,3 +23,5 @@ Code highlighting uses HighlighterSwift with bundled highlight.js grammars and A
 `SelectableText` measures with a copy of its native text-field cell. Attributed-string `boundingRect` undercounted line height and could clip the final line. Keep the per-width and attributed-string identity cache; `--shot code` checks that the final glyph fits.
 
 Upstream update checks only notify; they do not install anything. Installing an upstream release would replace these additions. To update this version, merge upstream changes into this fork and rebuild.
+
+The Codex provider reads models and reasoning efforts from the installed app-server, preserving its catalog order. Auto-detection prefers Codex bundled with the ChatGPT or Codex desktop app before standalone CLI locations. An explicit path in Settings still wins. If the picker is missing new models, check that path and the installed Codex version. Do not add guessed model IDs to the live catalog.

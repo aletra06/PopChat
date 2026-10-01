@@ -47,8 +47,9 @@ enum CodexAppServerClient {
         var errorDescription: String? { message }
     }
 
-    /// Finder-launched apps have a small PATH, so also check the common Codex
-    /// install locations. An explicit path wins when the user supplies one.
+    /// Prefer the desktop app's Codex, which updates with its model catalog.
+    /// Finder-launched apps also need common CLI locations outside their PATH.
+    /// An explicit path wins when the user supplies one.
     ///
     /// May block for seconds (the login-shell probe below), so it must only run
     /// on the dedicated check/turn queues — never the main thread or a Swift
@@ -62,6 +63,10 @@ enum CodexAppServerClient {
         let candidates = [
             defaultsPath,
             environmentPath,
+            "\(home)/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "\(home)/Applications/Codex.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
             "/opt/homebrew/bin/codex",
             "/usr/local/bin/codex",
             "\(home)/.local/bin/codex",
